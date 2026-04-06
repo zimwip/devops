@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevOps Guide — AP3 Platform</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap');
+
+  :root {
+    --bg: #0e0f11;
+    --bg2: #15171a;
+    --bg3: #1c1f24;
+    --border: rgba(255,255,255,0.08);
+    --border2: rgba(255,255,255,0.14);
+    --text: #e8e6e0;
+    --muted: #8a8880;
+    --accent: #4f9cf9;
+    --accent2: #38d9a9;
+    --accent3: #f4a742;
+    --accent4: #e05c6e;
+    --purple: #9b7cf4;
+    --blue: #4f9cf9;
+    --teal: #38d9a9;
+    --amber: #f4a742;
+    --coral: #e05c6e;
+    --gray: #5a5d63;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  /* HEADER */
+  header {
+    padding: 64px 48px 48px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  header::before {
+    content: '';
+    position: absolute;
+    top: -120px; right: -80px;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(79,156,249,0.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .header-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+  header h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(32px, 5vw, 56px);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    max-width: 700px;
+  }
+  header h1 span { color: var(--accent); }
+  .header-meta {
+    margin-top: 24px;
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .meta-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  /* NAV */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(14,15,17,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 48px;
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+  nav a {
+    display: block;
+    padding: 14px 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    text-decoration: none;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  nav a:hover { color: var(--text); border-color: var(--border2); }
+
+  /* LAYOUT */
+  main { max-width: 1100px; margin: 0 auto; padding: 0 48px 80px; }
+
+  section {
+    padding: 64px 0 0;
+  }
+
+  .section-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+
+  h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    letter-spacing: -0.01em;
+  }
+
+  h3 {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    margin-top: 36px;
+  }
+
+  p { color: #c8c6c0; margin-bottom: 16px; }
+
+  /* CARDS */
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 20px;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .card-sm {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .card-sm h4 {
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .card-sm p { font-size: 13px; color: var(--muted); margin: 0; }
+
+  /* PILL / BADGE */
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .pill-blue  { background: rgba(79,156,249,0.15); color: var(--blue); }
+  .pill-teal  { background: rgba(56,217,169,0.15); color: var(--teal); }
+  .pill-amber { background: rgba(244,167,66,0.15);  color: var(--amber); }
+  .pill-coral { background: rgba(224,92,110,0.15);  color: var(--coral); }
+  .pill-purple{ background: rgba(155,124,244,0.15); color: var(--purple); }
+
+  /* CODE BLOCKS */
+  pre {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    overflow-x: auto;
+    margin: 20px 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #c8c6c0;
+  }
+  pre .c  { color: var(--muted); font-style: italic; }
+  pre .k  { color: var(--accent); }
+  pre .s  { color: var(--teal); }
+  pre .n  { color: var(--amber); }
+  pre .v  { color: var(--purple); }
+  pre .ok { color: var(--teal); }
+  pre .err{ color: var(--coral); }
+
+  /* SVG diagrams */
+  .diagram-wrap {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px 24px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .diagram-wrap svg { display: block; margin: 0 auto; }
+
+  /* SVG shared styles */
+  .dsvg text { font-family: 'DM Sans', sans-serif; fill: var(--text); }
+  .dsvg .th  { font-weight: 500; font-size: 13px; }
+  .dsvg .ts  { font-size: 11px; fill: var(--muted); }
+  .dsvg .arr { stroke: rgba(255,255,255,0.25); fill: none; stroke-width: 1.2; marker-end: url(#arr); }
+  .dsvg .arr-b { stroke: var(--blue);   fill: none; stroke-width: 1.2; marker-end: url(#arr-b); }
+  .dsvg .arr-t { stroke: var(--teal);   fill: none; stroke-width: 1.2; marker-end: url(#arr-t); }
+  .dsvg .arr-a { stroke: var(--amber);  fill: none; stroke-width: 1.2; marker-end: url(#arr-a); }
+  .dsvg .arr-c { stroke: var(--coral);  fill: none; stroke-width: 1.2; marker-end: url(#arr-c); }
+  .dsvg .ldr  { stroke: rgba(255,255,255,0.15); fill: none; stroke-width: 0.8; stroke-dasharray: 4 3; }
+
+  /* branch lines */
+  .br-main    { stroke: var(--blue);   }
+  .br-develop { stroke: var(--teal);   }
+  .br-feature { stroke: var(--amber);  }
+  .br-release { stroke: var(--purple); }
+  .br-hotfix  { stroke: var(--coral);  }
+
+  /* BOX fills */
+  .bx-blue   { fill: rgba(79,156,249,0.12);  stroke: rgba(79,156,249,0.4);  }
+  .bx-teal   { fill: rgba(56,217,169,0.12);  stroke: rgba(56,217,169,0.4);  }
+  .bx-amber  { fill: rgba(244,167,66,0.12);  stroke: rgba(244,167,66,0.4);  }
+  .bx-coral  { fill: rgba(224,92,110,0.12);  stroke: rgba(224,92,110,0.4);  }
+  .bx-purple { fill: rgba(155,124,244,0.12); stroke: rgba(155,124,244,0.4); }
+  .bx-gray   { fill: rgba(90,93,99,0.2);     stroke: rgba(90,93,99,0.5);    }
+  .bx-dark   { fill: rgba(255,255,255,0.04); stroke: rgba(255,255,255,0.1); }
+
+  /* TEXT colors for colored boxes */
+  .tx-blue   { fill: var(--blue);   }
+  .tx-teal   { fill: var(--teal);   }
+  .tx-amber  { fill: var(--amber);  }
+  .tx-coral  { fill: var(--coral);  }
+  .tx-purple { fill: var(--purple); }
+  .tx-muted  { fill: var(--muted);  }
+  .tx-main   { fill: var(--text);   }
+
+  /* TABLE */
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border2);
+  }
+  td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13.5px;
+    color: #c8c6c0;
+    vertical-align: top;
+  }
+  td code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--teal);
+  }
+
+  /* RULE LIST */
+  .rule-list { list-style: none; margin: 16px 0; }
+  .rule-list li {
+    display: flex;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    color: #c0beba;
+  }
+  .rule-list li:last-child { border-bottom: none; }
+  .rule-list .ri {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    min-width: 24px;
+    padding-top: 3px;
+  }
+
+  /* DIVIDER */
+  .div { height: 1px; background: var(--border); margin: 48px 0 0; }
+
+  /* FOOTER */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 32px 48px;
+    text-align: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-tag">Technical Documentation — Internal</div>
+  <h1>DevOps <span>Guide</span><br>AP3 Platform</h1>
+  <div class="header-meta">
+    <div class="meta-item"><div class="meta-dot"></div>GitHub + Jenkins</div>
+    <div class="meta-item"><div class="meta-dot" style="background:var(--teal)"></div>OpenShift / AWS hybrid</div>
+    <div class="meta-item"><div class="meta-dot" style="background:var(--amber)"></div>Independent microservices</div>
+    <div class="meta-item"><div class="meta-dot" style="background:var(--purple)"></div>Ephemeral POC environments</div>
+  </div>
+</header>
+
+<nav>
+  <a href="#overview">Overview</a>
+  <a href="#branches">Git Branches</a>
+  <a href="#pipeline">CI/CD Pipeline</a>
+  <a href="#envs">Environments</a>
+  <a href="#poc">POC Environments</a>
+  <a href="#deps">Dependencies</a>
+  <a href="#versioning">Maven Versioning</a>
+  <a href="#release-notes">Release Notes</a>
+  <a href="#transverse">Cross-cutting</a>
+</nav>
+
+<main>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 1. OVERVIEW                                     -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="overview">
+  <div class="section-label">01 — Architecture</div>
+  <h2>Overview</h2>
+  <p>Each microservice is an autonomous unit with its own lifecycle: its own Git repo, Jenkins pipeline, semantic version, and Helm chart. The platform enforces global consistency through shared conventions and a central environment configuration repository.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <rect x="30" y="20" width="700" height="66" rx="10" class="bx-blue" stroke-width="0.6"/>
+      <text class="th tx-blue" x="380" y="47" text-anchor="middle" dominant-baseline="central">Source layer — GitHub</text>
+      <text class="ts" x="380" y="68" text-anchor="middle" dominant-baseline="central">One repo per microservice · conventional branches · semantic version tags</text>
+      <line x1="380" y1="86" x2="380" y2="118" class="arr"/>
+      <rect x="30" y="120" width="700" height="66" rx="10" class="bx-purple" stroke-width="0.6"/>
+      <text class="th tx-purple" x="380" y="147" text-anchor="middle" dominant-baseline="central">CI/CD Orchestration — Jenkins</text>
+      <text class="ts" x="380" y="168" text-anchor="middle" dominant-baseline="central">Jenkinsfile per service · parallel pipelines · global shared library</text>
+      <line x1="380" y1="186" x2="380" y2="218" class="arr"/>
+      <rect x="30" y="220" width="700" height="66" rx="10" class="bx-teal" stroke-width="0.6"/>
+      <text class="th tx-teal" x="380" y="247" text-anchor="middle" dominant-baseline="central">Artifact Registry</text>
+      <text class="ts" x="380" y="268" text-anchor="middle" dominant-baseline="central">Tagged Docker images · versioned Helm charts · Kubernetes manifests</text>
+      <line x1="185" y1="286" x2="155" y2="318" class="arr"/>
+      <line x1="380" y1="286" x2="380" y2="318" class="arr"/>
+      <line x1="575" y1="286" x2="605" y2="318" class="arr"/>
+      <rect x="30" y="320" width="210" height="76" rx="10" class="bx-amber" stroke-width="0.6"/>
+      <text class="th tx-amber" x="135" y="346" text-anchor="middle" dominant-baseline="central">OpenShift (current)</text>
+      <text class="ts" x="135" y="366" text-anchor="middle" dominant-baseline="central">dev · staging · prod</text>
+      <text class="ts" x="135" y="383" text-anchor="middle" dominant-baseline="central">+ poc-* namespaces</text>
+      <rect x="270" y="320" width="220" height="76" rx="10" class="bx-purple" stroke-width="0.6"/>
+      <text class="th tx-purple" x="380" y="346" text-anchor="middle" dominant-baseline="central">POC / Ephemeral</text>
+      <text class="ts" x="380" y="366" text-anchor="middle" dominant-baseline="central">poc-{name}-{date}</text>
+      <text class="ts" x="380" y="376" text-anchor="middle" dominant-baseline="central">auto-expires · TTL-based</text>
+      <text class="ts" x="380" y="392" text-anchor="middle" dominant-baseline="central">openshift or aws · per env</text>
+      <rect x="520" y="320" width="210" height="76" rx="10" class="bx-coral" stroke-width="0.6"/>
+      <text class="th tx-coral" x="625" y="346" text-anchor="middle" dominant-baseline="central">AWS — hybrid target</text>
+      <text class="ts" x="625" y="366" text-anchor="middle" dominant-baseline="central">EKS · ECR · Route53</text>
+      <text class="ts" x="625" y="383" text-anchor="middle" dominant-baseline="central">same Helm chart, diff values</text>
+    </svg>
+  </div>
+
+  <div class="card-grid">
+    <div class="card-sm"><h4 class="tx-blue">Key principle</h4><p>Each service deploys independently. A production bug in service-auth does not require redelivering service-orders.</p></div>
+    <div class="card-sm"><h4 class="tx-teal">Source of truth</h4><p>The <code>platform-config</code> repo declares which version of each service runs in which environment.</p></div>
+    <div class="card-sm"><h4 class="tx-amber">Hybrid portability</h4><p>Helm abstracts the target. Only <code>values-{env}.yaml</code> differs between OpenShift and EKS.</p></div>
+    <div class="card-sm"><h4 class="tx-purple">Shared library</h4><p>Common CI/CD logic lives in <code>jenkins-shared-lib</code>, not duplicated in every Jenkinsfile.</p></div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 2. BRANCH STRATEGY                             -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="branches">
+  <div class="div"></div>
+  <div class="section-label">02 — Git Flow</div>
+  <h2>Branch Strategy</h2>
+  <p>Every microservice repo follows the same branch model. This consistency lets Jenkins react predictably to any service.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#4f9cf9" stroke-width="1.5" stroke-linecap="round"/></marker>
+        <marker id="arr-t" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#38d9a9" stroke-width="1.5" stroke-linecap="round"/></marker>
+        <marker id="arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#f4a742" stroke-width="1.5" stroke-linecap="round"/></marker>
+        <marker id="arr-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#e05c6e" stroke-width="1.5" stroke-linecap="round"/></marker>
+        <marker id="arr-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#9b7cf4" stroke-width="1.5" stroke-linecap="round"/></marker>
+      </defs>
+      <!-- Labels left -->
+      <rect x="20" y="44"  width="80" height="22" rx="5" class="bx-blue"   stroke-width="0.5"/><text class="ts tx-blue"   x="60" y="55" text-anchor="middle" dominant-baseline="central">main</text>
+      <rect x="20" y="124" width="80" height="22" rx="5" class="bx-teal"   stroke-width="0.5"/><text class="ts tx-teal"   x="60" y="135" text-anchor="middle" dominant-baseline="central">develop</text>
+      <rect x="20" y="204" width="80" height="22" rx="5" class="bx-amber"  stroke-width="0.5"/><text class="ts tx-amber"  x="60" y="215" text-anchor="middle" dominant-baseline="central">feature/*</text>
+      <rect x="20" y="284" width="80" height="22" rx="5" class="bx-coral"  stroke-width="0.5"/><text class="ts tx-coral"  x="60" y="295" text-anchor="middle" dominant-baseline="central">hotfix/*</text>
+      <rect x="20" y="344" width="80" height="22" rx="5" class="bx-purple" stroke-width="0.5"/><text class="ts tx-purple" x="60" y="355" text-anchor="middle" dominant-baseline="central">release/*</text>
+      <!-- Timeline lines -->
+      <line x1="110" y1="55"  x2="730" y2="55"  stroke="var(--blue)"   stroke-width="2.5"/>
+      <line x1="110" y1="135" x2="650" y2="135" stroke="var(--teal)"   stroke-width="2"/>
+      <line x1="200" y1="215" x2="430" y2="215" stroke="var(--amber)"  stroke-width="1.5"/>
+      <line x1="520" y1="295" x2="660" y2="295" stroke="var(--coral)"  stroke-width="1.5"/>
+      <line x1="460" y1="355" x2="640" y2="355" stroke="var(--purple)" stroke-width="1.5"/>
+      <!-- Commits main -->
+      <circle cx="160" cy="55" r="7" fill="var(--blue)"/>
+      <circle cx="390" cy="55" r="7" fill="var(--blue)"/>
+      <circle cx="620" cy="55" r="7" fill="var(--blue)"/>
+      <circle cx="710" cy="55" r="7" fill="var(--blue)"/>
+      <!-- Tags -->
+      <rect x="140" y="20" width="52" height="20" rx="4" class="bx-blue" stroke-width="0.5"/><text class="ts tx-blue" x="166" y="30" text-anchor="middle" dominant-baseline="central">v1.0.0</text>
+      <rect x="370" y="20" width="52" height="20" rx="4" class="bx-blue" stroke-width="0.5"/><text class="ts tx-blue" x="396" y="30" text-anchor="middle" dominant-baseline="central">v1.1.0</text>
+      <rect x="598" y="20" width="52" height="20" rx="4" class="bx-blue" stroke-width="0.5"/><text class="ts tx-blue" x="624" y="30" text-anchor="middle" dominant-baseline="central">v1.1.1</text>
+      <rect x="690" y="20" width="52" height="20" rx="4" class="bx-blue" stroke-width="0.5"/><text class="ts tx-blue" x="716" y="30" text-anchor="middle" dominant-baseline="central">v1.2.0</text>
+      <!-- Commits develop -->
+      <circle cx="200" cy="135" r="6" fill="var(--teal)"/>
+      <circle cx="330" cy="135" r="6" fill="var(--teal)"/>
+      <circle cx="460" cy="135" r="6" fill="var(--teal)"/>
+      <circle cx="590" cy="135" r="6" fill="var(--teal)"/>
+      <circle cx="650" cy="135" r="6" fill="var(--teal)"/>
+      <!-- Feature -->
+      <circle cx="250" cy="215" r="5" fill="var(--amber)"/>
+      <circle cx="370" cy="215" r="5" fill="var(--amber)"/>
+      <path d="M200 135 Q200 175 250 215" fill="none" stroke="var(--amber)" stroke-width="1.2"/>
+      <path d="M370 215 Q430 215 430 135 L460 135" fill="none" stroke="var(--amber)" stroke-width="1.2" marker-end="url(#arr-a)"/>
+      <!-- Hotfix -->
+      <circle cx="570" cy="295" r="5" fill="var(--coral)"/>
+      <path d="M390 55 Q520 55 520 295 L570 295" fill="none" stroke="var(--coral)" stroke-width="1.2"/>
+      <path d="M570 295 Q660 295 660 135 L590 135" fill="none" stroke="var(--coral)" stroke-width="1.2" marker-end="url(#arr-c)"/>
+      <path d="M570 295 L660 295 Q720 295 720 55 L710 55" fill="none" stroke="var(--coral)" stroke-width="1.2" marker-end="url(#arr-c)"/>
+      <!-- Release -->
+      <circle cx="500" cy="355" r="5" fill="var(--purple)"/>
+      <path d="M460 135 Q460 355 500 355 L640 355" fill="none" stroke="var(--purple)" stroke-width="1.2"/>
+      <path d="M640 355 Q680 355 680 135 L650 135" fill="none" stroke="var(--purple)" stroke-width="1.2" marker-end="url(#arr-p)"/>
+      <path d="M640 355 Q700 355 700 55 L710 55" fill="none" stroke="var(--purple)" stroke-width="1.2" marker-end="url(#arr-p)"/>
+      <text class="ts tx-muted" x="310" y="250" text-anchor="middle">PR + review</text>
+    </svg>
+  </div>
+
+  <table>
+    <tr><th>Branch</th><th>Protection</th><th>Triggers</th><th>Convention</th></tr>
+    <tr><td><span class="pill pill-blue">main</span></td><td>PR required · 1 reviewer</td><td>Build + prod deploy (on tag)</td><td>Always deployable</td></tr>
+    <tr><td><span class="pill pill-teal">develop</span></td><td>PR required</td><td>Build + auto deploy to DEV</td><td>Continuous integration</td></tr>
+    <tr><td><span class="pill pill-amber">feature/*</span></td><td>None</td><td>Build + unit tests</td><td><code>feature/TICKET-description</code></td></tr>
+    <tr><td><span class="pill pill-purple">release/*</span></td><td>No direct push</td><td>Build + auto deploy to STAGING</td><td><code>release/1.9.0</code></td></tr>
+    <tr><td><span class="pill pill-coral">hotfix/*</span></td><td>None</td><td>Build + tests only</td><td><code>hotfix/TICKET-description</code></td></tr>
+    <tr><td><span class="pill" style="background:rgba(155,124,244,0.15);color:var(--purple)">poc/*</span></td><td>None</td><td>Build + tests (quality gate skipped)</td><td><code>poc/experiment-name</code></td></tr>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 3. CI/CD PIPELINE                              -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="pipeline">
+  <div class="div"></div>
+  <div class="section-label">03 — Jenkins</div>
+  <h2>CI/CD Pipeline per service</h2>
+  <p>Each service has its own <code>Jenkinsfile</code> at the repo root. Common logic is centralised in the <strong>shared library</strong>. The Jenkinsfile only declares service-specific behaviour.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 310" xmlns="http://www.w3.org/2000/svg">
+      <rect x="20"  y="30" width="110" height="56" rx="8" class="bx-gray"   stroke-width="0.5"/><text class="th tx-main" x="75"  y="52" text-anchor="middle" dominant-baseline="central">Checkout</text><text class="ts" x="75"  y="70" text-anchor="middle" dominant-baseline="central">git clone</text>
+      <line x1="130" y1="58" x2="150" y2="58" class="arr"/>
+      <rect x="150" y="30" width="110" height="56" rx="8" class="bx-blue"   stroke-width="0.5"/><text class="th tx-blue"   x="205" y="52" text-anchor="middle" dominant-baseline="central">Build</text><text class="ts" x="205" y="70" text-anchor="middle" dominant-baseline="central">compile · lint</text>
+      <line x1="260" y1="58" x2="280" y2="58" class="arr"/>
+      <rect x="280" y="30" width="110" height="56" rx="8" class="bx-teal"   stroke-width="0.5"/><text class="th tx-teal"   x="335" y="52" text-anchor="middle" dominant-baseline="central">Tests</text><text class="ts" x="335" y="70" text-anchor="middle" dominant-baseline="central">unit · integration</text>
+      <line x1="390" y1="58" x2="410" y2="58" class="arr"/>
+      <rect x="410" y="30" width="130" height="56" rx="8" class="bx-amber"  stroke-width="0.5"/><text class="th tx-amber"  x="475" y="52" text-anchor="middle" dominant-baseline="central">Quality gate</text><text class="ts" x="475" y="70" text-anchor="middle" dominant-baseline="central">SonarQube · SAST</text>
+      <line x1="540" y1="58" x2="560" y2="58" class="arr"/>
+      <rect x="560" y="30" width="170" height="56" rx="8" class="bx-purple" stroke-width="0.5"/><text class="th tx-purple" x="645" y="52" text-anchor="middle" dominant-baseline="central">Package</text><text class="ts" x="645" y="70" text-anchor="middle" dominant-baseline="central">Docker build · push · Helm</text>
+      <line x1="645" y1="86" x2="645" y2="118" class="arr"/>
+      <text class="ts tx-muted" x="648" y="104" text-anchor="start">tag vX.Y.Z</text>
+      <rect x="20"  y="120" width="160" height="56" rx="8" class="bx-coral"  stroke-width="0.5"/><text class="th tx-coral" x="100" y="140" text-anchor="middle" dominant-baseline="central">Deploy PROD</text><text class="ts" x="100" y="158" text-anchor="middle" dominant-baseline="central">manual approval</text>
+      <line x1="200" y1="148" x2="220" y2="148" class="arr"/>
+      <rect x="220" y="120" width="170" height="56" rx="8" class="bx-amber"  stroke-width="0.5"/><text class="th tx-amber" x="305" y="140" text-anchor="middle" dominant-baseline="central">Deploy STAGING</text><text class="ts" x="305" y="158" text-anchor="middle" dominant-baseline="central">auto · release branch</text>
+      <line x1="390" y1="148" x2="410" y2="148" class="arr"/>
+      <rect x="410" y="120" width="160" height="56" rx="8" class="bx-teal"   stroke-width="0.5"/><text class="th tx-teal"  x="490" y="140" text-anchor="middle" dominant-baseline="central">Deploy DEV</text><text class="ts" x="490" y="158" text-anchor="middle" dominant-baseline="central">auto · develop branch</text>
+      <path d="M645 148 L570 148" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+      <rect x="20" y="230" width="720" height="56" rx="8" class="bx-dark" stroke-width="0.5"/><text class="th tx-main" x="380" y="250" text-anchor="middle" dominant-baseline="central">Post-deploy</text><text class="ts" x="380" y="268" text-anchor="middle" dominant-baseline="central">smoke tests · health checks · auto rollback on failure · notification</text>
+      <line x1="100" y1="176" x2="100" y2="228" class="arr"/>
+      <line x1="380" y1="176" x2="380" y2="228" class="arr"/>
+    </svg>
+  </div>
+
+  <h3>Service repo structure</h3>
+  <pre><span class="c"># Each Java microservice</span>
+service-orders/
+├── <span class="k">Jenkinsfile</span>           <span class="c"># service-specific pipeline</span>
+├── <span class="k">pom.xml</span>               <span class="c"># version = source of truth</span>
+├── <span class="k">Dockerfile</span>
+├── <span class="k">service-manifest.yaml</span>  <span class="c"># inter-service dependencies</span>
+├── openapi/
+│   └── orders-v2.yaml    <span class="c"># exposed API contract</span>
+└── helm/
+    ├── Chart.yaml
+    ├── values.yaml
+    ├── values-dev.yaml
+    ├── values-staging.yaml
+    └── values-prod.yaml</pre>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 4. ENVIRONMENT MANAGEMENT                      -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="envs">
+  <div class="div"></div>
+  <div class="section-label">04 — Traceability</div>
+  <h2>Environment Management</h2>
+  <p>A versioned <code>platform-config</code> Git repo is the single source of truth for all environments. Every change goes through a PR — giving a complete, auditable history of every deployment.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 370" xmlns="http://www.w3.org/2000/svg">
+      <rect x="230" y="20" width="300" height="60" rx="10" class="bx-purple" stroke-width="0.6"/>
+      <text class="th tx-purple" x="380" y="44" text-anchor="middle" dominant-baseline="central">platform-config (Git)</text>
+      <text class="ts"           x="380" y="64" text-anchor="middle" dominant-baseline="central">source of truth · PR required · Git history = audit log</text>
+      <line x1="280" y1="80" x2="155" y2="128" class="arr"/>
+      <line x1="380" y1="80" x2="380" y2="128" class="arr"/>
+      <line x1="480" y1="80" x2="605" y2="128" class="arr"/>
+      <rect x="30"  y="130" width="200" height="110" rx="8" class="bx-teal"  stroke-width="0.6"/>
+      <text class="th tx-teal"  x="130" y="152" text-anchor="middle" dominant-baseline="central">dev/versions.yaml</text>
+      <text class="ts" x="130" y="172" text-anchor="middle" dominant-baseline="central">service-auth: 2.4.1-SNAP</text>
+      <text class="ts" x="130" y="189" text-anchor="middle" dominant-baseline="central">service-orders: 1.9.0</text>
+      <text class="ts" x="130" y="206" text-anchor="middle" dominant-baseline="central">lib-platform: 1.4.0-SNAP</text>
+      <rect x="280" y="130" width="200" height="110" rx="8" class="bx-amber" stroke-width="0.6"/>
+      <text class="th tx-amber" x="380" y="152" text-anchor="middle" dominant-baseline="central">staging/versions.yaml</text>
+      <text class="ts" x="380" y="172" text-anchor="middle" dominant-baseline="central">service-auth: 2.3.0</text>
+      <text class="ts" x="380" y="189" text-anchor="middle" dominant-baseline="central">service-orders: 1.9.0</text>
+      <text class="ts" x="380" y="206" text-anchor="middle" dominant-baseline="central">lib-platform: 1.3.0</text>
+      <rect x="530" y="130" width="200" height="110" rx="8" class="bx-coral" stroke-width="0.6"/>
+      <text class="th tx-coral" x="630" y="152" text-anchor="middle" dominant-baseline="central">prod/versions.yaml</text>
+      <text class="ts" x="630" y="172" text-anchor="middle" dominant-baseline="central">service-auth: 2.2.1</text>
+      <text class="ts" x="630" y="189" text-anchor="middle" dominant-baseline="central">service-orders: 1.8.5</text>
+      <text class="ts" x="630" y="206" text-anchor="middle" dominant-baseline="central">lib-platform: 1.3.0</text>
+      <rect x="190" y="300" width="380" height="50" rx="8" class="bx-gray" stroke-width="0.5"/>
+      <text class="th tx-main" x="380" y="318" text-anchor="middle" dominant-baseline="central">Jenkins deploy pipeline</text>
+      <text class="ts"         x="380" y="338" text-anchor="middle" dominant-baseline="central">reads versions.yaml · helm upgrade --set image.tag=X.Y.Z</text>
+      <line x1="130" y1="240" x2="250" y2="298" class="arr"/>
+      <line x1="380" y1="240" x2="380" y2="298" class="arr"/>
+      <line x1="630" y1="240" x2="510" y2="298" class="arr"/>
+    </svg>
+  </div>
+
+  <h3>versions.yaml format</h3>
+  <pre><span class="c"># prod/versions.yaml</span>
+<span class="n">_meta</span>:
+  <span class="n">updated_at</span>: <span class="s">"2026-03-28T14:32:00Z"</span>
+  <span class="n">updated_by</span>: <span class="s">"jenkins/job/platform-deploy/42"</span>
+  <span class="n">env_type</span>:   <span class="s">"fixed"</span>
+  <span class="n">cluster</span>:    <span class="s">"openshift-prod"</span>
+
+<span class="k">services</span>:
+  <span class="n">service-auth</span>:
+    <span class="n">version</span>:     <span class="s">"2.2.1"</span>
+    <span class="n">image</span>:       <span class="s">"registry.internal/service-auth:2.2.1"</span>
+    <span class="n">deployed_at</span>: <span class="s">"2026-03-28T14:32:00Z"</span></pre>
+
+  <p>Full traceability via <code>git log prod/versions.yaml</code> — every commit corresponds to a deployment, with the approver recorded via the GitHub PR.</p>
+
+  <h3>Cluster profiles</h3>
+  <p>The <code>platform.yaml</code> at the root of the platform repo defines all known clusters. Each profile drives the full deploy path — which CLI tool to use, which registry to pull from, and which Helm values file to apply.</p>
+  <pre><span class="c"># platform.yaml — cluster profiles</span>
+<span class="k">clusters</span>:
+  <span class="n">openshift-dev</span>:
+    <span class="n">platform</span>:           <span class="s">"openshift"</span>   <span class="c"># "openshift" | "aws"</span>
+    <span class="n">api_url</span>:            <span class="s">"https://api.ocp-dev.internal:6443"</span>
+    <span class="n">context</span>:            <span class="s">"ocp-dev/system:admin"</span>
+    <span class="n">registry</span>:           <span class="s">"registry.internal"</span>
+    <span class="n">helm_values_suffix</span>: <span class="s">"dev"</span>   <span class="c"># → helm/values-dev.yaml</span>
+
+  <span class="n">eks-prod</span>:
+    <span class="n">platform</span>:           <span class="s">"aws"</span>
+    <span class="n">region</span>:             <span class="s">"eu-west-1"</span>
+    <span class="n">cluster_name</span>:       <span class="s">"platform-eks-prod"</span>
+    <span class="n">registry</span>:           <span class="s">"123456789.dkr.ecr.eu-west-1.amazonaws.com"</span>
+    <span class="n">helm_values_suffix</span>: <span class="s">"prod"</span></pre>
+
+  <div class="card-grid">
+    <div class="card-sm"><h4 class="tx-teal">OpenShift deploy path</h4><p>Switches kubeconfig context via <code>oc config use-context</code>, then runs <code>helm upgrade --install</code> with <code>--set openshift.enabled=true</code>. Requires an active <code>oc login</code> session or a pre-configured kubeconfig context.</p></div>
+    <div class="card-sm"><h4 class="tx-amber">AWS / EKS deploy path</h4><p>Updates kubeconfig automatically via <code>aws eks update-kubeconfig</code>, then runs <code>helm upgrade --install</code> with <code>--set aws.region=...</code>. Image pull credentials come from IRSA or the node instance profile — no explicit docker login needed.</p></div>
+    <div class="card-sm"><h4 class="tx-blue">Platform resolution order</h4><p>Explicit <code>--platform</code> flag → cluster profile in <code>platform.yaml</code> → base environment's platform → fallback to <code>openshift</code>. The resolved platform is stored in <code>versions.yaml</code> so every subsequent deploy uses the same target automatically.</p></div>
+    <div class="card-sm"><h4 class="tx-purple">Jenkins integration</h4><p>When <code>JENKINS_TOKEN</code> is set, Jenkins receives <code>PLATFORM</code> and <code>CLUSTER</code> as build parameters and handles the platform-specific auth internally. The local deploy path is used only for POC environments and local testing.</p></div>
+  </div>
+
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 5. POC ENVIRONMENTS                            -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="poc">
+  <div class="div"></div>
+  <div class="section-label">05 — Ephemeral Environments</div>
+  <h2>POC Environments</h2>
+  <p>Any developer can spin up an isolated namespace forked from a base environment, deploy experimental service versions, iterate freely, then destroy everything cleanly. The entire lifecycle is tracked in Git.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg">
+      <rect x="30"  y="40" width="140" height="56" rx="8" class="bx-teal"   stroke-width="0.6"/>
+      <text class="th tx-teal"   x="100" y="62" text-anchor="middle" dominant-baseline="central">1. Create</text>
+      <text class="ts"           x="100" y="80" text-anchor="middle" dominant-baseline="central">fork from base env</text>
+      <rect x="210" y="40" width="140" height="56" rx="8" class="bx-purple" stroke-width="0.6"/>
+      <text class="th tx-purple" x="280" y="62" text-anchor="middle" dominant-baseline="central">2. Deploy</text>
+      <text class="ts"           x="280" y="80" text-anchor="middle" dominant-baseline="central">experimental versions</text>
+      <rect x="390" y="40" width="140" height="56" rx="8" class="bx-amber"  stroke-width="0.6"/>
+      <text class="th tx-amber"  x="460" y="62" text-anchor="middle" dominant-baseline="central">3. Validate</text>
+      <text class="ts"           x="460" y="80" text-anchor="middle" dominant-baseline="central">test &amp; iterate</text>
+      <rect x="570" y="40" width="140" height="56" rx="8" class="bx-coral"  stroke-width="0.6"/>
+      <text class="th tx-coral"  x="640" y="62" text-anchor="middle" dominant-baseline="central">4. Destroy</text>
+      <text class="ts"           x="640" y="80" text-anchor="middle" dominant-baseline="central">or promote to staging</text>
+      <line x1="170" y1="68" x2="208" y2="68" class="arr"/>
+      <line x1="350" y1="68" x2="388" y2="68" class="arr"/>
+      <line x1="530" y1="68" x2="568" y2="68" class="arr"/>
+      <rect x="30" y="140" width="700" height="50" rx="8" class="bx-dark" stroke-width="0.5"/>
+      <text class="th tx-main" x="380" y="158" text-anchor="middle" dominant-baseline="central">Naming convention</text>
+      <text class="ts"         x="380" y="178" text-anchor="middle" dominant-baseline="central">poc-{short-slug}-{YYYYMMDD}  ·  example: poc-payment-kafka-20260403</text>
+      <rect x="30"  y="215" width="330" height="50" rx="8" class="bx-teal"  stroke-width="0.5"/>
+      <text class="th tx-teal"  x="195" y="233" text-anchor="middle" dominant-baseline="central">Cluster: openshift-dev</text>
+      <text class="ts"          x="195" y="251" text-anchor="middle" dominant-baseline="central">namespace: platform-poc-{name}-{date}</text>
+      <rect x="400" y="215" width="330" height="50" rx="8" class="bx-amber" stroke-width="0.5"/>
+      <text class="th tx-amber" x="565" y="233" text-anchor="middle" dominant-baseline="central">Auto-expiry (TTL)</text>
+      <text class="ts"          x="565" y="251" text-anchor="middle" dominant-baseline="central">soft deadline · warning shown · manual destroy</text>
+    </svg>
+  </div>
+
+  <h3>POC versions.yaml anatomy</h3>
+  <pre><span class="c"># envs/poc-payment-kafka-20260403/versions.yaml</span>
+<span class="n">_meta</span>:
+  <span class="n">env_type</span>:          <span class="s">"poc"</span>         <span class="c"># distinguishes from fixed envs</span>
+  <span class="n">base_env</span>:          <span class="s">"staging"</span>     <span class="c"># forked from here</span>
+  <span class="n">owner</span>:             <span class="s">"john.doe"</span>
+  <span class="n">description</span>:       <span class="s">"Test async payment flow with Kafka"</span>
+  <span class="n">expires_at</span>:        <span class="s">"2026-04-17T00:00:00Z"</span>    <span class="c"># soft deadline (default 14 days, max 365)</span>
+  <span class="n">branch_convention</span>: <span class="s">"poc/payment-kafka"</span>
+  <span class="n">cluster</span>:           <span class="s">"openshift-dev"</span>
+  <span class="n">namespace</span>:         <span class="s">"platform-poc-payment-kafka-20260403"</span>
+
+<span class="k">services</span>:
+  <span class="n">service-auth</span>:     <span class="c"># inherited from staging — unchanged</span>
+    <span class="n">version</span>: <span class="s">"2.3.0"</span>
+  <span class="n">service-payments</span>: <span class="c"># experimental — only exists here</span>
+    <span class="n">version</span>:      <span class="s">"0.1.0-SNAPSHOT-exp42"</span>
+    <span class="n">experimental</span>: <span class="ok">true</span></pre>
+
+  <h3>Complete CLI workflow</h3>
+  <pre><span class="c"># 1. Create a POC forked from staging</span>
+python scripts/platform_cli.py env create \
+  --name payment-kafka --type poc --base staging \
+  --description <span class="s">"Test async Kafka payment flow"</span> --ttl-days 14
+
+<span class="c"># Windows CMD</span>
+platform.bat poc create payment-kafka staging
+
+<span class="c"># Windows PowerShell</span>
+.\platform.ps1 poc create payment-kafka staging
+
+<span class="c"># 2. Deploy an experimental version to your POC</span>
+python scripts/platform_cli.py deploy \
+  --env poc-payment-kafka-20260403 \
+  --service service-payments --version 0.1.0-SNAPSHOT-exp42
+
+<span class="c"># 3. Diff your POC against staging</span>
+python scripts/platform_cli.py env diff \
+  --from poc-payment-kafka-20260403 --to staging
+
+<span class="c"># 4. Destroy when done</span>
+python scripts/platform_cli.py env destroy \
+  --name poc-payment-kafka-20260403 --force</pre>
+
+  <div class="card-grid">
+    <div class="card-sm"><h4 class="tx-teal">Git = audit log</h4><p>Every POC creation and destruction is a Git commit in <code>platform-config</code>. Who created it, when, and what versions were deployed — all traceable.</p></div>
+    <div class="card-sm"><h4 class="tx-purple">Quality gate skipped</h4><p><code>poc/*</code> branches skip SonarQube in Jenkins. Fast iteration without coverage blockers.</p></div>
+    <div class="card-sm"><h4 class="tx-amber">Soft TTL deadline</h4><p>Expiry is a <strong>soft deadline</strong> — no automatic destruction. When a POC passes its <code>expires_at</code>, a warning appears in <code>env info</code> and the dashboard. Extend with <code>env extend</code> or destroy manually.</p></div>
+    <div class="card-sm"><h4 class="tx-coral">Promote to staging</h4><p>When the experiment is validated, merge <code>poc/payment-kafka</code> into <code>develop</code>, then create a <code>release/*</code> branch — the normal promotion flow takes over.</p></div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 6. INTER-SERVICE DEPENDENCIES                  -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="deps">
+  <div class="div"></div>
+  <div class="section-label">06 — Compatibility</div>
+  <h2>Inter-Service Dependencies</h2>
+  <p>Each service explicitly declares the minimum required versions of its dependencies in a <code>service-manifest.yaml</code>. Jenkins validates all constraints before every deployment.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg">
+      <rect x="295" y="20" width="170" height="56" rx="8" class="bx-blue"   stroke-width="0.6"/>
+      <text class="th tx-blue"   x="380" y="42" text-anchor="middle" dominant-baseline="central">spe (Single Entry Point)</text>
+      <text class="ts"           x="380" y="60" text-anchor="middle" dominant-baseline="central">v1.4.0</text>
+      <rect x="50"  y="150" width="190" height="56" rx="8" class="bx-teal"   stroke-width="0.6"/>
+      <text class="th tx-teal"   x="145" y="170" text-anchor="middle" dominant-baseline="central">service-orders</text>
+      <text class="ts"           x="145" y="188" text-anchor="middle" dominant-baseline="central">v1.9.0 · req auth &gt;=2.2.0</text>
+      <rect x="520" y="150" width="190" height="56" rx="8" class="bx-teal"   stroke-width="0.6"/>
+      <text class="th tx-teal"   x="615" y="170" text-anchor="middle" dominant-baseline="central">service-products</text>
+      <text class="ts"           x="615" y="188" text-anchor="middle" dominant-baseline="central">v2.1.0 · req auth &gt;=2.0.0</text>
+      <rect x="50"  y="260" width="170" height="56" rx="8" class="bx-purple" stroke-width="0.6"/>
+      <text class="th tx-purple" x="135" y="280" text-anchor="middle" dominant-baseline="central">service-auth</text>
+      <text class="ts"           x="135" y="298" text-anchor="middle" dominant-baseline="central">v2.2.1</text>
+      <rect x="540" y="260" width="170" height="56" rx="8" class="bx-purple" stroke-width="0.6"/>
+      <text class="th tx-purple" x="625" y="280" text-anchor="middle" dominant-baseline="central">service-notif</text>
+      <text class="ts"           x="625" y="298" text-anchor="middle" dominant-baseline="central">v3.0.1</text>
+      <path d="M330 76 L175 148" fill="none" stroke="var(--blue)"  stroke-width="1" marker-end="url(#arr-b)"/>
+      <path d="M430 76 L585 148" fill="none" stroke="var(--blue)"  stroke-width="1" marker-end="url(#arr-b)"/>
+      <path d="M135 206 L135 258" fill="none" stroke="var(--teal)" stroke-width="1" marker-end="url(#arr-t)"/>
+      <path d="M240 178 L400 178 L400 287 L540 287" fill="none" stroke="var(--teal)" stroke-width="1" marker-end="url(#arr-t)"/>
+      <path d="M520 178 L280 178 L280 287 L222 287" fill="none" stroke="var(--teal)" stroke-width="1" marker-end="url(#arr-t)"/>
+      <path d="M625 206 L625 258" fill="none" stroke="var(--teal)" stroke-width="1" marker-end="url(#arr-t)"/>
+      <rect x="64" y="218" width="82" height="20" rx="4" class="bx-amber" stroke-width="0.5"/><text class="ts tx-amber" x="105" y="228" text-anchor="middle" dominant-baseline="central">req &gt;=2.2.0</text>
+      <rect x="178" y="277" width="60" height="18" rx="4" class="bx-teal"  stroke-width="0.5"/><text class="ts tx-teal"  x="208" y="286" text-anchor="middle" dominant-baseline="central">OK 2.2.1</text>
+    </svg>
+  </div>
+
+  <h3>service-manifest.yaml</h3>
+  <pre><span class="c"># service-orders/service-manifest.yaml</span>
+<span class="n">name</span>: <span class="s">service-orders</span>
+<span class="n">version</span>: <span class="s">"1.9.0"</span>
+
+<span class="k">requires</span>:
+  <span class="n">service-auth</span>: <span class="s">"&gt;=2.2.0"</span>
+  <span class="n">service-notif</span>: <span class="s">"&gt;=3.0.0"</span>
+  <span class="n">lib-platform</span>: <span class="s">"&gt;=1.3.0"</span>
+
+<span class="k">exposes</span>:
+  <span class="n">api-version</span>: <span class="s">"v2"</span>
+  <span class="n">contract</span>: <span class="s">"openapi/orders-v2.yaml"</span></pre>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 7. MAVEN VERSIONING                            -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="versioning">
+  <div class="div"></div>
+  <div class="section-label">07 — Maven &amp; Java</div>
+  <h2>Maven Versioning and Propagation</h2>
+  <p><code>pom.xml</code> is the version source of truth for a Java service. Jenkins reads this number and propagates it to the Docker image, the Git tag, and the Helm chart — never typed manually.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 200" xmlns="http://www.w3.org/2000/svg">
+      <rect x="20"  y="60" width="150" height="80" rx="8" class="bx-blue"  stroke-width="0.6"/>
+      <text class="th tx-blue" x="95"  y="84"  text-anchor="middle" dominant-baseline="central">pom.xml</text>
+      <text class="ts"         x="95"  y="104" text-anchor="middle" dominant-baseline="central">&lt;version&gt;</text>
+      <text class="ts"         x="95"  y="122" text-anchor="middle" dominant-baseline="central">1.9.0</text>
+      <rect x="230" y="60" width="160" height="80" rx="8" class="bx-gray"  stroke-width="0.5"/>
+      <text class="th tx-main" x="310" y="84"  text-anchor="middle" dominant-baseline="central">Jenkins</text>
+      <text class="ts"          x="310" y="104" text-anchor="middle" dominant-baseline="central">mvn help:evaluate</text>
+      <text class="ts"          x="310" y="122" text-anchor="middle" dominant-baseline="central">SERVICE_VERSION=1.9.0</text>
+      <line x1="170" y1="100" x2="228" y2="100" class="arr"/>
+      <rect x="460" y="20"  width="140" height="50" rx="8" class="bx-purple" stroke-width="0.5"/><text class="th tx-purple" x="530" y="38"  text-anchor="middle" dominant-baseline="central">Docker image</text><text class="ts" x="530" y="56"  text-anchor="middle" dominant-baseline="central">service-orders:1.9.0</text>
+      <rect x="460" y="80"  width="140" height="50" rx="8" class="bx-teal"   stroke-width="0.5"/><text class="th tx-teal"   x="530" y="98"  text-anchor="middle" dominant-baseline="central">Git tag</text><text class="ts" x="530" y="116" text-anchor="middle" dominant-baseline="central">v1.9.0</text>
+      <rect x="460" y="140" width="140" height="50" rx="8" class="bx-amber"  stroke-width="0.5"/><text class="th tx-amber"  x="530" y="158" text-anchor="middle" dominant-baseline="central">Helm chart</text><text class="ts" x="530" y="176" text-anchor="middle" dominant-baseline="central">appVersion: 1.9.0</text>
+      <path d="M390 90  L458 45"  fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#arr)"/>
+      <path d="M390 100 L458 105" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#arr)"/>
+      <path d="M390 110 L458 162" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#arr)"/>
+      <rect x="620" y="60"  width="126" height="80" rx="8" class="bx-dark" stroke-width="0.5"/>
+      <text class="th tx-main" x="683" y="84"  text-anchor="middle" dominant-baseline="central">/actuator/info</text>
+      <text class="ts"          x="683" y="104" text-anchor="middle" dominant-baseline="central">version: 1.9.0</text>
+      <text class="ts"          x="683" y="122" text-anchor="middle" dominant-baseline="central">commit: a3f8c12</text>
+      <line x1="600" y1="100" x2="618" y2="100" class="arr"/>
+    </svg>
+  </div>
+
+  <table>
+    <tr><th>Branch</th><th>pom.xml version</th><th>Image produced</th><th>Deployable to prod</th></tr>
+    <tr><td><span class="pill pill-teal">develop</span></td><td><code>1.9.0-SNAPSHOT</code></td><td><code>service-orders:1.9.0-SNAPSHOT-a3f8c12</code></td><td><span class="pill pill-coral">no</span></td></tr>
+    <tr><td><span class="pill pill-purple">release/1.9.0</span></td><td><code>1.9.0</code> (via <code>mvn versions:set</code>)</td><td><code>service-orders:1.9.0</code></td><td><span class="pill pill-teal">yes</span></td></tr>
+    <tr><td><span class="pill pill-blue">main (tag)</span></td><td><code>1.9.0</code></td><td><code>service-orders:1.9.0</code> (same image)</td><td><span class="pill pill-teal">yes — deployed</span></td></tr>
+    <tr><td><span class="pill pill-coral">hotfix</span></td><td><code>1.9.1-SNAPSHOT</code> → <code>1.9.1</code></td><td><code>service-orders:1.9.1</code></td><td><span class="pill pill-teal">yes</span></td></tr>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 8. RELEASE NOTES                               -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="release-notes">
+  <div class="div"></div>
+  <div class="section-label">08 — Changelog</div>
+  <h2>Release Notes Generation</h2>
+  <p>Release notes are generated automatically from commit messages using <strong>Conventional Commits</strong>. Each service publishes its own GitHub Release, independently from the others.</p>
+
+  <h3>Conventional Commits convention</h3>
+  <pre><span class="k">feat</span>(orders): add deferred payment support
+<span class="ok">fix</span>(orders): correct VAT calculation on composite products
+<span class="c">chore: upgrade Spring Boot to 3.4</span>
+<span class="err">BREAKING CHANGE</span>: /orders API now returns a paginated object
+
+<span class="c"># Format: type(scope): description
+# Types: feat | fix | chore | docs | refactor | test | perf</span></pre>
+
+  <h3>CLI access</h3>
+  <pre><span class="c"># Fetch the latest GitHub Release for a service</span>
+python scripts/platform_cli.py release-notes --service service-auth
+python scripts/platform_cli.py release-notes --service service-auth --version 2.2.1 --json</pre>
+
+  <div class="card-grid" style="margin-top:20px">
+    <div class="card-sm"><h4 class="tx-teal">Result</h4><p>One GitHub Release per service per version, with the diff since the previous release, the Docker image, and the Git SHA.</p></div>
+    <div class="card-sm"><h4 class="tx-amber">Prerequisite</h4><p>Enforce Conventional Commits via a pre-commit hook (<code>commitlint</code>) or a GitHub Action validating PR titles.</p></div>
+    <div class="card-sm"><h4 class="tx-purple">Platform CLI</h4><p><code>python scripts/platform_cli.py release-notes --service my-svc</code> fetches release notes directly from the terminal on all platforms.</p></div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- 9. CROSS-CUTTING CONCERNS                      -->
+<!-- ══════════════════════════════════════════════ -->
+<section id="transverse">
+  <div class="div"></div>
+  <div class="section-label">09 — Platform</div>
+  <h2>Cross-cutting Concerns</h2>
+  <p>These capabilities are never re-implemented in each service. They are either injected by the platform (transparent to the service) or provided via the internal <code>lib-platform</code> Maven library.</p>
+
+  <div class="diagram-wrap">
+    <svg class="dsvg" width="100%" viewBox="0 0 760 480" xmlns="http://www.w3.org/2000/svg">
+      <rect x="10" y="10" width="740" height="460" rx="14" class="bx-dark" stroke-width="0.6"/>
+      <text class="ts tx-muted" x="30" y="30" dominant-baseline="central">Platform layer (injected — transparent to the service)</text>
+      <rect x="30"  y="50" width="158" height="80" rx="8" class="bx-blue"   stroke-width="0.5"/><text class="th tx-blue"   x="109" y="74" text-anchor="middle" dominant-baseline="central">Logging</text><text class="ts" x="109" y="94" text-anchor="middle" dominant-baseline="central">sidecar Fluentd/Vector</text><text class="ts" x="109" y="112" text-anchor="middle" dominant-baseline="central">JSON structured stdout</text>
+      <rect x="203" y="50" width="158" height="80" rx="8" class="bx-coral"  stroke-width="0.5"/><text class="th tx-coral"  x="282" y="74" text-anchor="middle" dominant-baseline="central">Network security</text><text class="ts" x="282" y="94" text-anchor="middle" dominant-baseline="central">mTLS · Istio / OSM</text><text class="ts" x="282" y="112" text-anchor="middle" dominant-baseline="central">transparent service mesh</text>
+      <rect x="376" y="50" width="158" height="80" rx="8" class="bx-purple" stroke-width="0.5"/><text class="th tx-purple" x="455" y="74" text-anchor="middle" dominant-baseline="central">Secrets</text><text class="ts" x="455" y="94" text-anchor="middle" dominant-baseline="central">Vault / AWS SecretsMgr</text><text class="ts" x="455" y="112" text-anchor="middle" dominant-baseline="central">injected as env vars</text>
+      <rect x="549" y="50" width="186" height="80" rx="8" class="bx-teal"   stroke-width="0.5"/><text class="th tx-teal"   x="642" y="74" text-anchor="middle" dominant-baseline="central">Distributed tracing</text><text class="ts" x="642" y="94" text-anchor="middle" dominant-baseline="central">OpenTelemetry agent</text><text class="ts" x="642" y="112" text-anchor="middle" dominant-baseline="central">auto-instrumented JVM</text>
+      <line x1="109" y1="130" x2="109" y2="175" class="arr"/>
+      <line x1="282" y1="130" x2="282" y2="175" class="arr"/>
+      <line x1="455" y1="130" x2="455" y2="175" class="arr"/>
+      <line x1="642" y1="130" x2="642" y2="175" class="arr"/>
+      <rect x="40" y="178" width="680" height="130" rx="10" class="bx-gray" stroke-width="0.5"/>
+      <text class="ts tx-muted" x="60" y="200" dominant-baseline="central">Business services — depends on lib-platform:1.3.0</text>
+      <rect x="60"  y="218" width="148" height="76" rx="8" class="bx-blue" stroke-width="0.5"/><text class="th tx-blue" x="134" y="244" text-anchor="middle" dominant-baseline="central">service-auth</text><text class="ts" x="134" y="264" text-anchor="middle" dominant-baseline="central">v2.2.1</text><text class="ts" x="134" y="282" text-anchor="middle" dominant-baseline="central">OIDC · JWT via lib</text>
+      <rect x="226" y="218" width="148" height="76" rx="8" class="bx-blue" stroke-width="0.5"/><text class="th tx-blue" x="300" y="244" text-anchor="middle" dominant-baseline="central">service-orders</text><text class="ts" x="300" y="264" text-anchor="middle" dominant-baseline="central">v1.9.0</text><text class="ts" x="300" y="282" text-anchor="middle" dominant-baseline="central">Kafka pub via lib</text>
+      <rect x="392" y="218" width="148" height="76" rx="8" class="bx-blue" stroke-width="0.5"/><text class="th tx-blue" x="466" y="244" text-anchor="middle" dominant-baseline="central">service-products</text><text class="ts" x="466" y="264" text-anchor="middle" dominant-baseline="central">v2.1.0</text><text class="ts" x="466" y="282" text-anchor="middle" dominant-baseline="central">config hot-reload</text>
+      <rect x="558" y="218" width="148" height="76" rx="8" class="bx-blue" stroke-width="0.5"/><text class="th tx-blue" x="632" y="244" text-anchor="middle" dominant-baseline="central">service-notif</text><text class="ts" x="632" y="264" text-anchor="middle" dominant-baseline="central">v3.0.1</text><text class="ts" x="632" y="282" text-anchor="middle" dominant-baseline="central">Kafka sub via lib</text>
+      <rect x="40"  y="370" width="330" height="90" rx="8" class="bx-amber"  stroke-width="0.5"/><text class="th tx-amber"  x="205" y="394" text-anchor="middle" dominant-baseline="central">Central configuration</text><text class="ts" x="205" y="414" text-anchor="middle" dominant-baseline="central">ConfigMap K8s · Spring Cloud Config</text><text class="ts" x="205" y="434" text-anchor="middle" dominant-baseline="central">hot-reload · separated by env</text>
+      <rect x="390" y="370" width="330" height="90" rx="8" class="bx-purple" stroke-width="0.5"/><text class="th tx-purple" x="555" y="394" text-anchor="middle" dominant-baseline="central">Pub/Sub — Kafka</text><text class="ts" x="555" y="414" text-anchor="middle" dominant-baseline="central">topics: domain.entity.event</text><text class="ts" x="555" y="434" text-anchor="middle" dominant-baseline="central">schema registry Avro · DLQ · retry</text>
+      <line x1="205" y1="308" x2="205" y2="368" class="arr"/>
+      <line x1="555" y1="308" x2="555" y2="368" class="arr"/>
+    </svg>
+  </div>
+
+  <div class="card-grid">
+    <div class="card-sm"><h4 class="tx-blue">Logging</h4><p>The service writes to <code>stdout</code> in JSON. The Fluentd/Vector sidecar collects, enriches, and forwards. Zero logging config in the service.</p></div>
+    <div class="card-sm"><h4 class="tx-coral">Security</h4><p>mTLS between services managed by Istio. User authentication (JWT/OIDC) via a Spring Security filter in <code>lib-platform</code>. Services never touch Keycloak directly.</p></div>
+    <div class="card-sm"><h4 class="tx-purple">Secrets</h4><p>Vault or AWS Secrets Manager injects secrets as environment variables at pod startup. The service reads <code>System.getenv("DB_PASSWORD")</code>. No secrets in Git — ever.</p></div>
+    <div class="card-sm"><h4 class="tx-teal">Tracing</h4><p>The OpenTelemetry agent attaches to the JVM via the <code>Dockerfile</code>. It auto-instruments Spring Boot, Kafka, and JDBC. The service writes zero tracing code.</p></div>
+    <div class="card-sm"><h4 class="tx-amber">Configuration</h4><p>ConfigMaps for infrastructure config. Spring Cloud Config Server for application config with hot-reload. Property names follow a shared naming convention.</p></div>
+    <div class="card-sm"><h4 class="tx-purple">Pub/Sub</h4><p>Topic naming: <code>orders.order.created</code>. Schema Registry versions Avro schemas. <code>lib-platform</code> provides producers/consumers with retry and dead-letter queue.</p></div>
+  </div>
+
+  <h3>lib-platform — the platform glue</h3>
+  <pre><span class="c">&lt;!-- pom.xml of every Java service --&gt;</span>
+<span class="k">&lt;dependency&gt;</span>
+  &lt;groupId&gt;<span class="s">com.myorg</span>&lt;/groupId&gt;
+  &lt;artifactId&gt;<span class="s">lib-platform</span>&lt;/artifactId&gt;
+  &lt;version&gt;<span class="v">${lib-platform.version}</span>&lt;/version&gt;
+<span class="k">&lt;/dependency&gt;</span>
+
+<span class="c"># What lib-platform activates automatically:</span>
+<span class="ok">+</span> JWT/OIDC security filter (Keycloak)
+<span class="ok">+</span> Kafka producer/consumer configuration + DLQ
+<span class="ok">+</span> JSON structured log format (MDC: traceId, serviceVersion)
+<span class="ok">+</span> /actuator/info enriched (version, commit, env)
+<span class="ok">+</span> OpenTelemetry propagation (W3C TraceContext)
+<span class="ok">+</span> Unified HTTP error handling (RFC 7807)</pre>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- SUMMARY — REPO STRUCTURE                       -->
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="div"></div>
+  <div class="section-label">Summary</div>
+  <h2>Repository Structure</h2>
+
+  <pre><span class="n">github.com/my-org/</span>
+├── <span class="k">service-auth/</span>              <span class="c"># one repo per microservice</span>
+│   ├── Jenkinsfile
+│   ├── pom.xml                  <span class="c"># version source of truth</span>
+│   ├── service-manifest.yaml    <span class="c"># declared dependencies</span>
+│   ├── Dockerfile
+│   ├── openapi/orders-v2.yaml
+│   └── helm/values-{env}.yaml
+│
+├── <span class="k">platform-config/</span>           <span class="c"># environment source of truth</span>
+│   ├── dev/versions.yaml
+│   ├── staging/versions.yaml
+│   ├── prod/versions.yaml
+│   └── poc-*/versions.yaml      <span class="c"># ephemeral POC environments</span>
+│
+├── <span class="k">platform/</span>                  <span class="c"># this repo — platform tooling</span>
+│   ├── scripts/platform_cli.py  <span class="c"># CLI (Linux · macOS · Windows)</span>
+│   ├── dashboard/backend/app.py <span class="c"># FastAPI dashboard + Swagger</span>
+│   ├── templates/               <span class="c"># springboot · react · python-api</span>
+│   ├── jenkins-shared-lib/      <span class="c"># shared Groovy pipeline logic</span>
+│   ├── Makefile                 <span class="c"># Linux/macOS shortcuts</span>
+│   ├── platform.bat             <span class="c"># Windows CMD shortcuts</span>
+│   └── platform.ps1             <span class="c"># Windows PowerShell shortcuts</span>
+│
+└── <span class="k">lib-platform-bom/</span>          <span class="c"># Maven BOM (version alignment)</span></pre>
+</section>
+
+</main>
+
+<footer>
+  DevOps Guide — AP3 Platform · GitHub + Jenkins · OpenShift / AWS hybrid
+</footer>
+
+</body>
+</html>

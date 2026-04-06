@@ -1,0 +1,5 @@
+name: react
+description: React 18 + Vite + nginx — single-page application with Docker and Jenkinsfile
+language: javascript
+created_at: null
+created_by: bootstrap

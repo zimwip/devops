@@ -1,0 +1,14 @@
+# helm/values-dev.yaml — DEV environment overrides
+replicaCount: 1
+
+env:
+  SPRING_PROFILES_ACTIVE: "dev"
+  LOG_LEVEL: "DEBUG"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

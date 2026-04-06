@@ -1,0 +1,128 @@
+# docker-compose.yml — AP3 local test environment
+#
+# No static IPs — services talk to each other by service name (Docker DNS).
+# k3d build pods reach Jenkins via host.k3d.internal (injected by k3d into
+# every pod's /etc/hosts), so no shared network with k3d is needed.
+#
+# Start order (managed by create.sh):
+#   Phase 1 — dc up -d postgres sonarqube registry gitea
+#   Phase 2 — dc up -d jenkins   (after SonarQube token + k3d SA token)
+
+services:
+
+  # ── PostgreSQL — SonarQube backend ──────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: sonarqube
+      POSTGRES_USER: sonarqube
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonarqube"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── SonarQube Community ──────────────────────────────────────────────────────
+  sonarqube:
+    image: sonarqube:10-community
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: "jdbc:postgresql://postgres:5432/sonarqube"
+      SONAR_JDBC_USERNAME: sonarqube
+      SONAR_JDBC_PASSWORD: "${POSTGRES_PASSWORD}"
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    ports:
+      - "9000:9000"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/api/system/status | grep -q '\"status\":\"UP\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ── Local container registry — simulates registry.internal / Artifactory ─────
+  registry:
+    image: registry:2
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+    restart: unless-stopped
+
+  # ── Gitea — local GitHub replacement ─────────────────────────────────────────
+  # GitHub-compatible REST API (v1) — platform CLI uses it like GitHub:
+  #   create repos, push CODEOWNERS, set branch protection.
+  gitea:
+    image: gitea/gitea:1.22
+    container_name: ap3-gitea
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__ROOT_URL: "http://localhost:3000/"
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__log__LEVEL: warn
+      # Registration stays open so create.sh can register the first admin via
+      # the web form (first user = auto-admin). The script disables it afterward.
+    ports:
+      - "3000:3000"
+      - "2222:22"
+    volumes:
+      - gitea_data:/data
+    restart: unless-stopped
+
+  # ── Jenkins LTS ──────────────────────────────────────────────────────────────
+  # Built from ./jenkins/Dockerfile — plugins pre-baked at image build time.
+  # JCasC config mounted from ./jenkins/casc/jenkins.yaml (SELinux :z for Fedora).
+  jenkins:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
+    image: ap3-jenkins:local
+    depends_on:
+      - sonarqube
+      - registry
+      - gitea
+    environment:
+      JENKINS_ADMIN_USER: "${JENKINS_ADMIN_USER}"
+      JENKINS_ADMIN_PASSWORD: "${JENKINS_ADMIN_PASSWORD}"
+      SONARQUBE_URL: "http://sonarqube:9000"
+      SONARQUBE_TOKEN: "${SONARQUBE_TOKEN}"
+      K8S_API_URL: "${K8S_API_URL}"
+      K8S_SA_TOKEN: "${K8S_SA_TOKEN}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-placeholder-set-in-env}"
+      # Docker-internal hostname — used by JCasC (giteaServers, globalLibraries).
+      # Must NOT be localhost:3000 (that resolves to Jenkins itself inside the container).
+      GITEA_URL: "http://gitea:3000"
+      GITEA_ORG: "${GITEA_ORG:-ap3}"
+      SHARED_LIB_REPO_NAME: "${SHARED_LIB_REPO_NAME:-jenkins-shared-lib}"
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_data:/var/jenkins_home
+      - ./jenkins/casc:/var/jenkins_home/casc_configs:ro,z
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  registry_data:
+  gitea_data:
+  jenkins_data:

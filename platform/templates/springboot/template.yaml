@@ -1,0 +1,5 @@
+name: springboot
+description: Spring Boot 3.4 + Java 21 — production-ready REST service with Actuator and Helm chart
+language: java
+created_at: null
+created_by: bootstrap

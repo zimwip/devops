@@ -1,0 +1,5 @@
+name: python-api
+description: Python 3.12 + FastAPI — lightweight async REST API with Docker and Jenkinsfile
+language: python
+created_at: null
+created_by: bootstrap

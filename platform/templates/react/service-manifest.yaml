@@ -1,0 +1,9 @@
+name: "{{SERVICE_NAME}}"
+version: "0.1.0-SNAPSHOT"
+
+requires:
+  lib-platform: ">=1.3.0"
+
+exposes:
+  type: "frontend"
+  framework: "react"

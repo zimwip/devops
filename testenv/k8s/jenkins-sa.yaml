@@ -1,0 +1,35 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jenkins-builds
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins-sa
+  namespace: jenkins-builds
+---
+# Explicit long-lived token secret (required for k8s ≥ 1.24)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-sa-token
+  namespace: jenkins-builds
+  annotations:
+    kubernetes.io/service-account.name: jenkins-sa
+type: kubernetes.io/service-account-token
+---
+# cluster-admin for a local test cluster is fine; scope down for production
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jenkins-sa-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: jenkins-sa
+    namespace: jenkins-builds

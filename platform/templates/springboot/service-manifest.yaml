@@ -1,0 +1,18 @@
+# service-manifest.yaml — {{SERVICE_NAME}}
+# Declare inter-service dependencies here.
+# Jenkins validates these constraints before every deployment.
+
+name: "{{SERVICE_NAME}}"
+version: "0.1.0-SNAPSHOT"   # kept in sync with pom.xml by Maven
+
+# Minimum versions of other services required at runtime.
+# Use semver ranges: ">=2.2.0", "~1.9.0", "^3.0.0"
+requires:
+  lib-platform: ">=1.3.0"
+  # service-auth: ">=2.2.0"
+  # service-notif: ">=3.0.0"
+
+# The API contract this service exposes.
+exposes:
+  api-version: "v1"
+  contract: "openapi/{{SERVICE_NAME}}-v1.yaml"

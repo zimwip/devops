@@ -1,0 +1,117 @@
+# jenkins.yaml — Jenkins Configuration as Code (JCasC)
+#
+# All ${VAR} references are resolved from environment variables injected by
+# docker-compose. The create.sh script populates testenv/.env with real values.
+# Reference: https://github.com/jenkinsci/configuration-as-code-plugin
+
+jenkins:
+  systemMessage: "AP3 Platform — Local Test Environment"
+
+  # No executors on the controller; all builds run in k3d agent pods.
+  numExecutors: 0
+
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_USER}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  authorizationStrategy:
+    globalMatrix:
+      permissions:
+        - "Overall/Administer:${JENKINS_ADMIN_USER}"
+        - "Overall/Read:authenticated"
+
+  # ── Kubernetes cloud — build pods spin up in k3d on demand ──────────────────
+  clouds:
+    - kubernetes:
+        name: "k3d-ap3"
+        serverUrl: "${K8S_API_URL}"
+        credentialsId: "k8s-sa-token"
+        namespace: "jenkins-builds"
+        # host.k3d.internal is injected into every build pod's /etc/hosts by k3d.
+        # It resolves to the host machine's IP, so pods reach Jenkins on its
+        # published ports (8080 / 50000) without a shared Docker network.
+        jenkinsUrl: "http://host.k3d.internal:8080"
+        jenkinsTunnel: "host.k3d.internal:50000"
+        skipTlsVerify: true
+        connectTimeout: 30
+        readTimeout: 30
+        containerCapStr: "10"
+
+# ── SonarQube server ─────────────────────────────────────────────────────────
+unclassified:
+  sonarGlobalConfiguration:
+    buildWrapperEnabled: true
+    installations:
+      - name: "sonarqube"
+        serverUrl: "${SONARQUBE_URL}"
+        credentialsId: "sonarqube-token"
+
+  # Jenkins location — needed for webhook callbacks and Blue Ocean links
+  location:
+    url: "http://localhost:8080/"
+
+  # Gitea server registration — required for GiteaSCMSource in multibranch pipelines.
+  # The serverUrl here MUST match the serverUrl used in job XML (GiteaSCMSource).
+  # manageHooks=false — we register webhooks ourselves at service creation time
+  # so the webhook URL can point to the correct internal Docker hostname.
+  giteaServers:
+    servers:
+      - displayName: "ap3-gitea"
+        serverUrl: "${GITEA_URL}"
+        credentialsId: "github-token"
+        manageHooks: false
+
+  # Shared pipeline library — pushed to Gitea by bootstrap/bootstrap.sh
+  # ${GITEA_URL} resolves to http://gitea:3000 inside the Jenkins container
+  # ${GITEA_ORG} and ${SHARED_LIB_REPO_NAME} are injected via docker-compose / .env
+  globalLibraries:
+    libraries:
+      - name: "platform-shared-lib"
+        defaultVersion: "main"
+        implicit: false
+        allowVersionOverride: true
+        retriever:
+          modernSCM:
+            scm:
+              git:
+                remote: "${GITEA_URL}/${GITEA_ORG}/${SHARED_LIB_REPO_NAME}.git"
+                credentialsId: "github-token"
+
+# ── Credentials ──────────────────────────────────────────────────────────────
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          # SonarQube analysis token
+          - string:
+              scope: GLOBAL
+              id: "sonarqube-token"
+              description: "SonarQube analysis token"
+              secret: "${SONARQUBE_TOKEN}"
+
+          # k3d Kubernetes service account bearer token
+          - string:
+              scope: GLOBAL
+              id: "k8s-sa-token"
+              description: "k3d jenkins-sa bearer token"
+              secret: "${K8S_SA_TOKEN}"
+
+          # Gitea / GitHub personal access token
+          # MUST be usernamePassword (not string) — the Gitea Jenkins plugin
+          # requires StandardUsernamePasswordCredentials for API authentication.
+          - usernamePassword:
+              scope: GLOBAL
+              id: "github-token"
+              description: "Gitea personal access token"
+              username: "${GITEA_ADMIN_USER:-ap3admin}"
+              password: "${GITHUB_TOKEN:-placeholder-replace-me}"
+
+          # Registry URL (referenced as credentials('registry-url') in buildService.groovy)
+          - string:
+              scope: GLOBAL
+              id: "registry-url"
+              description: "Container registry URL"
+              secret: "localhost:5000"

@@ -1,0 +1,84 @@
+// bootstrap/Jenkinsfile — Shared library self-validation pipeline.
+//
+// ⚠ ARCHITECTURAL EXCEPTION: This file intentionally has NO @Library reference.
+// It exists to validate and release the shared library itself, breaking the
+// circular dependency that would arise from using the library to test itself.
+//
+// This job is registered manually by a senior DevOps engineer and is restricted
+// to library maintainers only. It is the ONLY legitimate exception to the
+// "all pipelines use the shared library" rule on this platform.
+//
+// Release flow:
+//   1. DevOps dev opens PR on the shared library repo
+//   2. This pipeline runs (syntax check + unit tests) on the PR branch
+//   3. Senior DevOps engineer approves and merges the PR
+//   4. This pipeline tags the release (e.g. v1.1)
+//   5. Service teams opt in by updating their @Library pin when ready
+
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(name: 'RELEASE_VERSION', defaultValue: '',
+               description: 'Version to tag on merge to main (e.g. v1.1). Leave empty for PR validation runs.')
+    }
+
+    stages {
+
+        stage('Syntax check') {
+            steps {
+                sh '''
+                    find vars/ src/ -name "*.groovy" | while read f; do
+                        groovy -e "new GroovyShell().parse(new File('$f'))" 2>&1 \
+                            && echo "OK: $f" || { echo "SYNTAX ERROR: $f"; exit 1; }
+                    done
+                '''
+            }
+        }
+
+        stage('Unit tests') {
+            steps {
+                sh 'mvn -B test -pl test/'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'test/**/surefire-reports/*.xml'
+                }
+            }
+        }
+
+        stage('Tag release') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression { params.RELEASE_VERSION?.trim() }
+                }
+            }
+            steps {
+                script {
+                    def version = params.RELEASE_VERSION.trim()
+                    sh "git tag ${version}"
+                    sh "git push origin ${version}"
+                    echo "Tagged shared library release: ${version}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                if (params.RELEASE_VERSION?.trim()) {
+                    echo "Shared library ${params.RELEASE_VERSION} released. " +
+                         "Services can now pin to @Library('platform-shared-lib@${params.RELEASE_VERSION}') _"
+                }
+            }
+        }
+    }
+}

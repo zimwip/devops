@@ -1,0 +1,39 @@
+# platform.yaml — AP3 Platform configuration
+# This file is written by bootstrap and managed by platform.sh config set
+# Do not edit manually; use the CLI or re-run bootstrap.
+
+github_url: https://github.com
+github_account_type: org          # "org" or "user"
+github_org: my-org
+github_token_env: GITHUB_TOKEN
+github_api_path: ""               # override for Gitea (e.g. "api/v1") or GHES ("")
+
+jenkins_url: https://jenkins.internal
+jenkins_git_url: ""               # Jenkins-internal URL for cloning (Docker: http://gitea:3000)
+jenkins_hook_url: ""              # Git server URL for Jenkins webhooks (Docker: http://jenkins:8080)
+jenkins_user_env: JENKINS_USER
+jenkins_token_env: JENKINS_TOKEN
+
+# shared_lib_url: full URL Jenkins uses to clone the shared library repo.
+# If empty, derived as: {jenkins_git_url or github_url}/{github_org}/jenkins-shared-lib.git
+shared_lib_url: ""
+shared_lib_version: main
+
+# sonarqube_url: used by bootstrap/delete.sh to remove SonarQube projects.
+sonarqube_url: ""
+
+registry: registry.internal
+registries:
+  openshift: registry.internal
+  aws: 123456789.dkr.ecr.eu-west-1.amazonaws.com
+
+clusters: {}
+
+default_cluster_dev: ""
+default_cluster_staging: ""
+default_cluster_prod: ""
+default_cluster_poc: ""
+
+# libraries: populated by bootstrap for each extra library repo created.
+# Managed by platform.sh lib commands.
+libraries: {}

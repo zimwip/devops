@@ -1,0 +1,17 @@
+/**
+ * Jenkinsfile — {{SERVICE_NAME}}
+ * Generated from the react template.
+ *
+ * The shared library is loaded directly from the platform repo — no global
+ * Jenkins configuration required. {{LIB_REPO_URL}} is the URL Jenkins uses
+ * internally to clone the library (may differ from the host-facing Gitea URL
+ * when Jenkins runs inside Docker/k3d).
+ */
+library(
+    identifier: 'platform-shared-lib@{{SHARED_LIB_VERSION}}',
+    retriever: modernSCM([$class: 'jenkins.plugins.git.GitSCMSource',
+                           remote: '{{LIB_REPO_URL}}',
+                           credentialsId: 'github-token'])
+)
+
+buildService(template: 'react')

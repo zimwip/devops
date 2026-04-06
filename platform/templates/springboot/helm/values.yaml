@@ -1,0 +1,43 @@
+# helm/values.yaml — default values, overridden per environment
+
+replicaCount: 1
+
+image:
+  repository: registry.internal/{{SERVICE_NAME}}
+  tag: "0.1.0-SNAPSHOT"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Liveness / readiness — Spring Boot Actuator or /health
+probes:
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 20
+    periodSeconds: 5
+
+# Environment variables injected at runtime
+env:
+  SPRING_PROFILES_ACTIVE: "default"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+
+# Secrets injected by Vault agent sidecar — NOT stored here
+# DB_PASSWORD, API_KEY, etc. come from Vault
+vaultSecrets:
+  enabled: true
+  role: "{{SERVICE_NAME}}"
+  path: "secret/{{SERVICE_NAME}}"

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  lib-platform-bom/pom.xml
+  Maven Bill of Materials for the platform.
+  Import this BOM in every service pom.xml to align dependency versions
+  without declaring them individually.
+
+  Usage in service pom.xml:
+    <dependencyManagement>
+      <dependencies>
+        <dependency>
+          <groupId>com.myorg</groupId>
+          <artifactId>lib-platform-bom</artifactId>
+          <version>1.3.0</version>
+          <type>pom</type>
+          <scope>import</scope>
+        </dependency>
+      </dependencies>
+    </dependencyManagement>
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.myorg</groupId>
+  <artifactId>lib-platform-bom</artifactId>
+  <version>1.3.0</version>
+  <packaging>pom</packaging>
+  <name>Platform BOM</name>
+  <description>
+    Bill of Materials — aligns all platform library versions across microservices.
+    Bump this single version in platform-config to update all services at once.
+  </description>
+
+  <properties>
+    <!-- Core platform library -->
+    <lib-platform.version>1.3.0</lib-platform.version>
+
+    <!-- Spring Boot — aligned across all services -->
+    <spring-boot.version>3.4.0</spring-boot.version>
+
+    <!-- Observability -->
+    <opentelemetry-agent.version>2.4.0</opentelemetry-agent.version>
+    <micrometer.version>1.13.0</micrometer.version>
+
+    <!-- Messaging -->
+    <kafka.version>3.7.0</kafka.version>
+    <avro.version>1.11.3</avro.version>
+    <confluent.version>7.6.0</confluent.version>
+
+    <!-- Security -->
+    <spring-security.version>6.3.0</spring-security.version>
+    <keycloak-adapter.version>24.0.4</keycloak-adapter.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Platform cross-cutting library -->
+      <dependency>
+        <groupId>com.myorg</groupId>
+        <artifactId>lib-platform</artifactId>
+        <version>${lib-platform.version}</version>
+      </dependency>
+
+      <!-- Spring Boot BOM — cascades all Spring versions -->
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- Kafka -->
+      <dependency>
+        <groupId>org.apache.kafka</groupId>
+        <artifactId>kafka-clients</artifactId>
+        <version>${kafka.version}</version>
+      </dependency>
+
+      <!-- Avro (schema registry) -->
+      <dependency>
+        <groupId>org.apache.avro</groupId>
+        <artifactId>avro</artifactId>
+        <version>${avro.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>

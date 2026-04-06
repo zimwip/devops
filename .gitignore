@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Node
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Secrets — never commit these
+.env
+.env.*
+.users
+*.token
+
+# Bootstrap runtime state (contains credentials and paths)
+bootstrap/.bootstrap-state.yaml
+
+# OS
+.DS_Store
+Thumbs.db
