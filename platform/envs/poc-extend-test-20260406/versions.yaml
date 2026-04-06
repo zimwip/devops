@@ -5,14 +5,14 @@ _meta:
   commit: bootstrap
   description: ''
   env_type: poc
-  expires_at: '2026-04-07T09:30:51.808053+00:00'
+  expires_at: '2026-04-21T09:30:51.808053+00:00'
   namespace: platform-poc-extend-test-20260406
   namespace_provided: false
   owner: test
   platform: openshift
   registry: registry.internal
-  updated_at: '2026-04-06T09:30:51.808053+00:00'
-  updated_by: tho.zimmer@gmail.com via platform-cli
+  updated_at: '2026-04-06T09:30:51.833595+00:00'
+  updated_by: tho.zimmer@gmail.com via platform-cli (extend)
 services:
   my-svc:
     deployed_at: null
