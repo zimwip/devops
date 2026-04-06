@@ -65,11 +65,7 @@ platform/
 │   ├── env_manager.py           ← Environment lifecycle
 │   ├── deployer.py              ← Helm / Jenkins deployments
 │   └── config.py                ← Platform configuration
-├── jenkins-shared-lib/          ← Groovy pipeline library (also its own repo)
-│   └── vars/
-│       ├── buildService.groovy
-│       ├── deployService.groovy
-│       └── ...
+├── libs/                        ← Per-library reference files (name, repo_url, source_dir)
 ├── dashboard/
 │   ├── backend/app.py           ← FastAPI server (REST API + Swagger UI)
 │   └── frontend/src/App.jsx     ← React dashboard SPA

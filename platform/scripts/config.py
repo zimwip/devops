@@ -114,6 +114,7 @@ class PlatformConfig:
             return f"{api}/user/repos"
         return f"{api}/orgs/{self.github_org}/repos"
     registry: str = "registry.internal"          # legacy fallback
+    libraries: dict = field(default_factory=dict)  # {name: {repo_url, source_dir, created_at}}
     default_cluster_dev: str = "openshift-dev"
     default_cluster_staging: str = "openshift-staging"
     default_cluster_prod: str = "openshift-prod"
@@ -221,7 +222,11 @@ class PlatformConfig:
         if not path.exists():
             raise FileNotFoundError(f"Environment '{env_name}' not found at {path}")
         with open(path) as f:
-            return yaml.safe_load(f) or {}
+            data = yaml.safe_load(f) or {}
+        # Normalize: bare `services:` key parses as None in PyYAML
+        if data.get("services") is None:
+            data["services"] = {}
+        return data
 
     def save_versions(self, env_name: str, data: dict):
         path = self.env_versions_path(env_name)
@@ -339,3 +344,44 @@ class PlatformConfig:
             except Exception:
                 pass
         return in_use
+
+    # ── Library registry ──────────────────────────────────────────────────────
+
+    def list_libraries(self) -> list[dict]:
+        """Return all registered libraries from platform.yaml, sorted by name."""
+        return [
+            {"name": name, **meta}
+            for name, meta in sorted(self.libraries.items())
+        ]
+
+    def save_library(self, name: str, repo_url: str, source_dir: str = ""):
+        """
+        Register a library in platform.yaml and create libs/<name>.yaml.
+        Idempotent — safe to call again if the library already exists.
+        """
+        import yaml as _yaml
+        from datetime import datetime, timezone
+
+        entry = {
+            "repo_url":   repo_url,
+            "source_dir": source_dir,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Update in-memory + platform.yaml
+        self.libraries[name] = entry
+        cfg_file = Path(self.config_path) if self.config_path else self.root / "platform.yaml"
+        if cfg_file.exists():
+            with open(cfg_file) as f:
+                data = _yaml.safe_load(f) or {}
+            data.setdefault("libraries", {})[name] = entry
+            with open(cfg_file, "w") as f:
+                _yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
+                           sort_keys=False)
+
+        # Create libs/<name>.yaml for per-library tracking
+        libs_dir = self.root / "libs"
+        libs_dir.mkdir(exist_ok=True)
+        with open(libs_dir / f"{name}.yaml", "w") as f:
+            _yaml.dump({"name": name, **entry}, f, default_flow_style=False,
+                       allow_unicode=True, sort_keys=False)

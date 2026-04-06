@@ -117,6 +117,7 @@ class PlatformConfig:
             return f"{api}/user/repos"
         return f"{api}/orgs/{self.github_org}/repos"
     registry: str = "registry.internal"          # legacy fallback
+    libraries: dict = field(default_factory=dict)  # {name: {repo_url, source_dir, created_at}}
     default_cluster_dev: str = "openshift-dev"
     default_cluster_staging: str = "openshift-staging"
     default_cluster_prod: str = "openshift-prod"

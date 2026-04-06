@@ -68,7 +68,7 @@ Three permanent environments: `dev`, `val`, `prod`. Ephemeral `poc-*` environmen
 - **Frontend** (`dashboard/frontend/src/App.jsx`) — Single-file React SPA (Vite); fetches from `/api/*`. In dev, Vite proxies API calls to the uvicorn backend.
 - **Tests** (`dashboard/backend/tests/`) — ~50 pytest tests that work against real `envs/` YAML files (no mocking of the file system).
 
-### Jenkins Shared Library (`jenkins-shared-lib/vars/`)
+### Jenkins Shared Library (`lib-extras/jenkins-shared-lib/vars/` in the toolkit root)
 
 `buildService.groovy` is the unified pipeline for all services. It branches on language (Maven vs npm vs Python) and on Git branch (`develop` → auto-deploy to dev, `release/*` → staging, `main` → manual approval → prod). Services customize behavior via `.ap3/hooks.yaml` in their own repos.
 

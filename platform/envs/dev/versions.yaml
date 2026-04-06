@@ -1,7 +1,0 @@
-_meta: {}
-services:
-  my-svc:
-    deployed_at: null
-    health: pending
-    image: registry.internal/my-svc:0.1.0-SNAPSHOT
-    version: 0.1.0-SNAPSHOT

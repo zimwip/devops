@@ -1,24 +1,20 @@
 @echo off
 :: bootstrap.bat — First-time AP3 platform setup (Windows CMD)
-:: Idempotent: checks root commit marker before running.
 ::
 :: Usage:
 ::   bootstrap.bat              interactive wizard
 ::   bootstrap.bat --yes        non-interactive (CI)
-::   bootstrap.bat --force      bypass already-bootstrapped check
 ::
 :: To fully reset:  rmdir /s /q .git  &&  bootstrap.bat
 
 setlocal enabledelayedexpansion
 set SCRIPT_DIR=%~dp0
 set YES_FLAG=
-set FORCE=0
 set BOOTSTRAP_MARKER=chore: initial AP3 platform bootstrap
 
 for %%A in (%*) do (
     if "%%A"=="--yes"   set YES_FLAG=--yes
     if "%%A"=="-y"      set YES_FLAG=--yes
-    if "%%A"=="--force" set FORCE=1
 )
 
 echo.
@@ -27,25 +23,6 @@ echo   ------------------------------------------
 echo   Repo: %SCRIPT_DIR%
 echo.
 
-:: ── Already-bootstrapped check ─────────────────────────────────────────────
-:: Read the root commit subject (--max-parents=0 = commits with no parent).
-:: If it matches the bootstrap marker the platform is already set up.
-if "!FORCE!"=="0" (
-    for /f "delims=" %%S in ('git log --max-parents=0 --format="%%s" 2^>nul') do set ROOT_SUBJECT=%%S
-    if "!ROOT_SUBJECT!"=="!BOOTSTRAP_MARKER!" (
-        echo   This repository has already been bootstrapped.
-        echo.
-        for /f "delims=" %%L in ('git log --max-parents=0 --format="%%h %%ci" 2^>nul') do echo   Root commit: %%L
-        echo.
-        echo   To re-run the wizard:     python scripts\wizard.py
-        echo   To add a cluster:         platform.bat cluster add ...
-        echo   To seed demo data:        demo.bat
-        echo   To fully reset:           rmdir /s /q .git  ^&^&  bootstrap.bat
-        echo   To bypass this check:     bootstrap.bat --force
-        echo.
-        pause & exit /b 0
-    )
-)
 
 :: ── Python ──────────────────────────────────────────────────────────────────
 echo   -^> Checking Python...
@@ -74,38 +51,46 @@ if errorlevel 1 ( echo   ! npm install failed )
 cd /d "%SCRIPT_DIR%"
 echo   OK Node dependencies installed
 
-:: ── Git init ────────────────────────────────────────────────────────────────
-:git_init
-echo.
-echo   -^> Checking git repository...
-git rev-parse --git-dir >nul 2>&1
-if errorlevel 1 (
-    echo   -^> Initialising git repository...
-    git init -b main
-    git config user.email "platform-bootstrap@ap3.local"
-    git config user.name "AP3 Bootstrap"
-    echo   OK Git repository initialised
-) else (
-    echo   OK Git repository already exists
-)
-
 :: ── Wizard ──────────────────────────────────────────────────────────────────
+:git_init
 echo.
 echo   -^> Running environment setup wizard...
 python "%SCRIPT_DIR%scripts\wizard.py" !YES_FLAG!
 if errorlevel 1 ( echo   [error] Wizard failed & pause & exit /b 1 )
 
-:: ── Initial git commit (bootstrap marker) ───────────────────────────────────
+:: ── Initial git commit on the platform-instance ──────────────────────────────
+:: Read the platform_target_dir written by wizard.py into .bootstrap-state.yaml
 echo.
 echo   -^> Creating initial platform commit...
+for /f "usebackq delims=" %%T in (
+    `python -c "import yaml; print(yaml.safe_load(open(r'%SCRIPT_DIR%.bootstrap-state.yaml'))['platform_target_dir'])"`
+) do set PLATFORM_DIR=%%T
+
+if not defined PLATFORM_DIR (
+    echo   [error] Could not determine platform target directory & pause & exit /b 1
+)
+
+cd /d "!PLATFORM_DIR!"
 git add --all >nul 2>&1
 git diff --cached --quiet >nul 2>&1
 if errorlevel 1 (
     git commit -m "chore: initial AP3 platform bootstrap" >nul 2>&1
-    echo   OK Initial commit created -- bootstrap marker set
+    echo   OK Initial commit created in !PLATFORM_DIR!
 ) else (
     echo   OK Nothing new to commit
 )
+
+:: ── Node dependencies in platform-instance ───────────────────────────────────
+node --version >nul 2>&1
+if not errorlevel 1 (
+    if exist "!PLATFORM_DIR!\dashboard\frontend" (
+        echo   -^> Installing Node dependencies...
+        cd /d "!PLATFORM_DIR!\dashboard\frontend"
+        call npm install --silent
+        echo   OK Node dependencies installed
+    )
+)
+cd /d "%SCRIPT_DIR%"
 
 :: ── Summary ─────────────────────────────────────────────────────────────────
 echo.

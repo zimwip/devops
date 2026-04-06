@@ -6,9 +6,14 @@ This repository is the **AP3 bootstrap toolkit** — its sole purpose is to crea
 
 ```
 bootstrap/       Entry point for creating a new platform instance
+lib-extras/      Library repos that bootstrap creates and pushes to git hosting
+  jenkins-shared-lib/    Groovy Jenkins pipeline shared library
+  lib-platform-bom/      Maven BOM for shared dependency versions
 platform/        Platform source template (copied to a new repo by bootstrap)
 testenv/         Local test environment (Gitea, Jenkins, SonarQube, k3d)
 ```
+
+Each subdirectory of `lib-extras/` is treated as an independent library repo: bootstrap creates the repo in your git hosting, pushes the contents, and records it in the platform instance under `platform.yaml:libraries` and `libs/<name>.yaml`. To add a new shared library, add a directory here and re-run bootstrap (or use `platform lib register` to reference an existing URL).
 
 ## Quick Start
 
@@ -34,8 +39,8 @@ set -a && source testenv/.env && set +a
 Bootstrap will:
 - Copy `platform/` to a new directory (default: `../platform`)
 - Configure it with your GitHub/Jenkins/cluster settings
-- Create the platform and `jenkins-shared-lib` repos in git hosting
-- Push any extra libraries found in `bootstrap/lib-extras/`
+- Create the platform and all library repos in git hosting (from `lib-extras/`)
+- Record each library in `platform.yaml:libraries` and `libs/<name>.yaml`
 - Create the standard environments (dev, val, prod)
 
 ### 3. Work from the platform instance

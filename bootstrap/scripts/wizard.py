@@ -959,162 +959,118 @@ def _create_platform_repo(cfg: PlatformConfig, repo_name: str):
 
 
 
-def _push_jenkins_shared_lib(cfg: PlatformConfig, lib_src: Path):
+def _upload_dir_via_api(cfg: PlatformConfig, repo_name: str, lib_dir: Path):
+    """Upload every file in lib_dir to a remote repo using the Contents API.
+
+    Each file is PUT to /repos/{org}/{repo}/contents/{path} with base64-encoded
+    content.  The remote creates one commit per file — no local git operations.
+
+    Works with both GitHub REST API v3 and Gitea (same endpoint).
     """
-    Create jenkins-shared-lib repo in Gitea/GitHub and push the local
-    jenkins-shared-lib/ directory to it.
+    import base64, requests
 
-    lib_src: path to the jenkins-shared-lib/ source directory (inside the
-             platform template tree, NOT inside the deployed platform instance).
-    """
-    import subprocess, tempfile, shutil, requests
+    headers = {
+        "Authorization": f"token {cfg.github_token}",
+        "Accept":        "application/vnd.github.v3+json",
+    }
+    base_url = f"{cfg.github_api_base}/repos/{cfg.github_org}/{repo_name}/contents"
 
-    step("Pushing jenkins-shared-lib to git hosting")
-
-    if not lib_src.is_dir():
-        warn(f"jenkins-shared-lib/ not found at {lib_src} — skipping shared lib push.")
-        return
-
-    # Create repo (422 = already exists)
-    payload = {"name": "jenkins-shared-lib", "private": False, "auto_init": False}
-    resp = requests.post(
-        cfg.github_repos_api(),
-        json=payload,
-        headers={"Authorization": f"token {cfg.github_token}",
-                 "Accept": "application/vnd.github.v3+json"},
-        timeout=15,
-    )
-    if resp.status_code not in (201, 422):
-        raise RuntimeError(
-            f"Failed to create jenkins-shared-lib repo: HTTP {resp.status_code} — {resp.text[:200]}"
+    files = sorted(p for p in lib_dir.rglob("*") if p.is_file())
+    for file_path in files:
+        rel = file_path.relative_to(lib_dir).as_posix()
+        content_b64 = base64.b64encode(file_path.read_bytes()).decode()
+        resp = requests.put(
+            f"{base_url}/{rel}",
+            json={"message": f"chore: add {rel}", "content": content_b64, "branch": "main"},
+            headers=headers,
+            timeout=15,
         )
-    if resp.status_code == 201:
-        success("Created repo jenkins-shared-lib")
-    else:
-        out("  Repo jenkins-shared-lib already exists — will push/update.")
-
-    # Build push URL with embedded credentials
-    # _GITHUB_LOGIN is set by _validate_tokens(); fall back to github_org admin if empty
-    login = _GITHUB_LOGIN or cfg.github_org
-    token = cfg.github_token
-    # Strip scheme from github_url to embed credentials
-    base = cfg.github_url
-    if base.startswith("https://"):
-        push_url = f"https://{login}:{token}@{base[8:]}/{cfg.github_org}/jenkins-shared-lib.git"
-    else:  # http://
-        push_url = f"http://{login}:{token}@{base[7:]}/{cfg.github_org}/jenkins-shared-lib.git"
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Copy library contents into temp dir
-        for item in lib_src.iterdir():
-            dest = Path(tmpdir) / item.name
-            if item.is_dir():
-                shutil.copytree(str(item), str(dest))
-            else:
-                shutil.copy2(str(item), str(dest))
-
-        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-        subprocess.run(["git", "-C", tmpdir, "init", "-b", "main"],
-                       check=True, capture_output=True)
-        subprocess.run(["git", "-C", tmpdir, "config", "user.email", "platform-bootstrap@ap3.local"],
-                       check=True, capture_output=True)
-        subprocess.run(["git", "-C", tmpdir, "config", "user.name", "AP3 Bootstrap"],
-                       check=True, capture_output=True)
-        subprocess.run(["git", "-C", tmpdir, "add", "--all"],
-                       check=True, capture_output=True)
-        subprocess.run(["git", "-C", tmpdir, "commit", "-m", "chore: initial jenkins-shared-lib push"],
-                       check=True, capture_output=True)
-        push_result = subprocess.run(
-            ["git", "-C", tmpdir, "push", push_url, "main", "--force"],
-            capture_output=True, env=env,
-        )
-        if push_result.returncode != 0:
-            err = push_result.stderr.decode()
+        if resp.status_code not in (200, 201):
             raise RuntimeError(
-                f"Failed to push jenkins-shared-lib:\n{err}\n\n"
-                f"Manual push:\n"
-                f"  cd /tmp/jenkins-shared-lib && git push {cfg.github_url}/{cfg.github_org}/jenkins-shared-lib.git main"
+                f"Failed to upload '{rel}' to '{repo_name}': "
+                f"HTTP {resp.status_code} — {resp.text[:200]}"
             )
+        out(f"  + {rel}")
 
-    success("jenkins-shared-lib pushed to git hosting")
 
+def _push_extra_libraries(
+    cfg: PlatformConfig, lib_extras_dir: Path, skip: set | None = None
+):
+    """Create a repo and upload files for every subdirectory of lib-extras/.
 
-def _push_extra_libraries(cfg: PlatformConfig, lib_extras_dir: Path):
-    """Push any additional libraries found in bootstrap/lib-extras/ as separate repos."""
+    Files are uploaded via the Contents API — no local git init, add, or commit.
+
+    skip: optional set of directory names to skip.
+    """
     if not lib_extras_dir.is_dir():
         return
-    import subprocess, tempfile, shutil, requests
+    import requests
 
     for lib_dir in sorted(lib_extras_dir.iterdir()):
         if not lib_dir.is_dir():
             continue
         repo_name = lib_dir.name
+        if skip and repo_name in skip:
+            continue
         step(f"Pushing library '{repo_name}' to git hosting")
 
+        # Create repo (422 = already exists)
         payload = {"name": repo_name, "private": False, "auto_init": False}
-        resp = requests.post(cfg.github_repos_api(), json=payload,
-                             headers={"Authorization": f"token {cfg.github_token}",
-                                      "Accept": "application/vnd.github.v3+json"},
-                             timeout=15)
+        resp = requests.post(
+            cfg.github_repos_api(), json=payload,
+            headers={"Authorization": f"token {cfg.github_token}",
+                     "Accept": "application/vnd.github.v3+json"},
+            timeout=15,
+        )
         if resp.status_code not in (201, 422):
             warn(f"Could not create repo '{repo_name}': HTTP {resp.status_code} — skipping.")
             continue
         if resp.status_code == 201:
             success(f"Created repo {repo_name}")
         else:
-            out(f"  Repo {repo_name} already exists — will push/update.")
+            out(f"  Repo {repo_name} already exists — will update.")
 
-        login = _GITHUB_LOGIN or cfg.github_org
-        token = cfg.github_token
-        base = cfg.github_url
-        if base.startswith("https://"):
-            push_url = f"https://{login}:{token}@{base[8:]}/{cfg.github_org}/{repo_name}.git"
-        else:
-            push_url = f"http://{login}:{token}@{base[7:]}/{cfg.github_org}/{repo_name}.git"
+        # Upload files via Contents API (server-side commits, no local git)
+        try:
+            _upload_dir_via_api(cfg, repo_name, lib_dir)
+        except Exception as e:
+            warn(f"Failed to upload files to '{repo_name}': {e}")
+            continue
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for item in lib_dir.iterdir():
-                dest = Path(tmpdir) / item.name
-                if item.is_dir():
-                    shutil.copytree(str(item), str(dest))
-                else:
-                    shutil.copy2(str(item), str(dest))
-            env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-            subprocess.run(["git", "-C", tmpdir, "init", "-b", "main"], check=True, capture_output=True)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "platform-bootstrap@ap3.local"],
-                           check=True, capture_output=True, env=env)
-            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "AP3 Bootstrap"],
-                           check=True, capture_output=True, env=env)
-            subprocess.run(["git", "-C", tmpdir, "add", "--all"], check=True, capture_output=True)
-            subprocess.run(["git", "-C", tmpdir, "commit", "-m", f"chore: initial {repo_name} push"],
-                           check=True, capture_output=True)
-            result = subprocess.run(["git", "-C", tmpdir, "push", push_url, "main", "--force"],
-                                    capture_output=True, env=env)
-            if result.returncode != 0:
-                warn(f"Failed to push {repo_name}: {result.stderr.decode()[:200]}")
-                continue
-
-        # Track in platform.yaml libraries map
-        lib_url = f"{cfg.github_url.rstrip('/')}/{cfg.github_org}/{repo_name}.git"
-        _register_library(cfg, repo_name, lib_url)
-        success(f"Library '{repo_name}' pushed")
+        # Track in platform.yaml libraries map and create libs/<name>.yaml
+        lib_url    = f"{cfg.github_url.rstrip('/')}/{cfg.github_org}/{repo_name}.git"
+        source_rel = f"lib-extras/{repo_name}"
+        _register_library(cfg, repo_name, lib_url, source_dir=source_rel)
+        success(f"Library '{repo_name}' uploaded")
 
 
-def _register_library(cfg: PlatformConfig, name: str, repo_url: str):
-    """Add an entry to the libraries: map in platform.yaml."""
+def _register_library(
+    cfg: PlatformConfig, name: str, repo_url: str, source_dir: str = "",
+):
+    """Record a library in platform.yaml and create libs/<name>.yaml in the platform instance."""
     import yaml as _yaml
-    cfg_file = cfg.root / "platform.yaml"
-    if not cfg_file.exists():
-        return
-    with open(cfg_file) as f:
-        data = _yaml.safe_load(f) or {}
-    libs = data.setdefault("libraries", {})
-    libs[name] = {
-        "repo_url": repo_url,
+
+    entry = {
+        "repo_url":   repo_url,
+        "source_dir": source_dir,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    with open(cfg_file, "w") as f:
-        _yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+
+    # 1. Update platform.yaml:libraries map
+    cfg_file = cfg.root / "platform.yaml"
+    if cfg_file.exists():
+        with open(cfg_file) as f:
+            data = _yaml.safe_load(f) or {}
+        data.setdefault("libraries", {})[name] = entry
+        with open(cfg_file, "w") as f:
+            _yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+
+    # 2. Create libs/<name>.yaml in the platform instance for per-library tracking
+    libs_dir = cfg.root / "libs"
+    libs_dir.mkdir(exist_ok=True)
+    lib_file = libs_dir / f"{name}.yaml"
+    with open(lib_file, "w") as f:
+        _yaml.safe_dump({"name": name, **entry}, f, default_flow_style=False, sort_keys=False)
 
 
 def _configure_jenkins_shared_lib(cfg: PlatformConfig):
@@ -1227,7 +1183,10 @@ def run(demo: bool = False, yes_mode: bool = False, config_path: str = "",
         if target_dir.exists():
             _shutil.rmtree(target_dir)
         _shutil.copytree(str(src_dir), str(target_dir),
-                         ignore=_shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
+                         ignore=_shutil.ignore_patterns(
+                             "__pycache__", "*.pyc", ".pytest_cache",
+                             "node_modules", "dist", ".venv",
+                         ))
         import subprocess as _sp
         _sp.run(["git", "-C", str(target_dir), "init", "-b", "main"],
                 check=True, capture_output=True)
@@ -1272,20 +1231,26 @@ def run(demo: bool = False, yes_mode: bool = False, config_path: str = "",
         _seed_demo_data(cfg, env_defs)
 
     shared_lib_repo_name = (_CONFIG or {}).get("shared_lib_repo_name", "jenkins-shared-lib")
-    lib_src = src_dir / "jenkins-shared-lib"
 
     if _CONFIG:
         hr()
         print()
         repo_name = _CONFIG.get("platform_repo_name", "platform")
         _create_platform_repo(cfg, repo_name)
-        _push_jenkins_shared_lib(cfg, lib_src)
-        # Push extra libraries from bootstrap/lib-extras/
-        _push_extra_libraries(cfg, bootstrap_dir / "lib-extras")
+        # Push all libraries from lib-extras/ (includes jenkins-shared-lib)
+        _push_extra_libraries(cfg, toolkit_root / "lib-extras")
         _configure_jenkins_shared_lib(cfg)
 
     # ── Write bootstrap state file for delete.sh ─────────────────────────────
     import yaml as _yaml
+
+    # Re-read platform.yaml to pick up any libraries registered during this run
+    _pdata: dict = {}
+    _pf = cfg.root / "platform.yaml"
+    if _pf.exists():
+        with open(_pf) as _f:
+            _pdata = _yaml.safe_load(_f) or {}
+
     state = {
         "platform_target_dir": str(target_dir),
         "platform_repo_name":  (_CONFIG or {}).get("platform_repo_name", "platform"),
@@ -1295,6 +1260,7 @@ def run(demo: bool = False, yes_mode: bool = False, config_path: str = "",
         "jenkins_url":  cfg.jenkins_url,
         "sonarqube_url": cfg.sonarqube_url,
         "bootstrapped_at": datetime.now(timezone.utc).isoformat(),
+        "libraries": _pdata.get("libraries", {}),
     }
     state_file = bootstrap_dir / ".bootstrap-state.yaml"
     with open(state_file, "w") as f:

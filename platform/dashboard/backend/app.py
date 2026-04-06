@@ -440,6 +440,63 @@ class ClusterSchema(BaseModel):
     cluster_name: str | None = None
 
 
+# ── Live pod / cluster schemas ────────────────────────────────────────────────
+
+class PodContainerSchema(BaseModel):
+    name: str
+    image: str
+    ready: bool
+    restart_count: int
+    state: str
+
+
+class PodInfoSchema(BaseModel):
+    name: str
+    namespace: str
+    phase: str
+    ready: str
+    restarts: int
+    age: str
+    node: str
+    containers: list[PodContainerSchema] = []
+
+
+class EnvPodsSchema(BaseModel):
+    env_name: str
+    cluster: str
+    namespace: str
+    reachable: bool
+    pods: list[PodInfoSchema] = []
+    checked_at: str = ""
+    error: str | None = None
+
+
+class ClusterNodeSchema(BaseModel):
+    name: str
+    status: str
+    roles: str
+    version: str
+    os: str
+
+
+class ClusterNamespaceSchema(BaseModel):
+    name: str
+    pod_count: int
+    running: int
+    pending: int
+    failed: int
+    pods: list[PodInfoSchema] = []
+
+
+class ClusterLiveSchema(BaseModel):
+    cluster: str
+    reachable: bool
+    checked_at: str
+    nodes: list[ClusterNodeSchema] = []
+    namespaces: list[ClusterNamespaceSchema] = []
+    error: str | None = None
+
+
 class AddClusterRequest(BaseModel):
     name: str = Field(..., description="Cluster name (e.g. openshift-dev, eks-prod)",
                       json_schema_extra={"example": "openshift-dev"})
@@ -1470,6 +1527,43 @@ def get_env_status(env_name: str):
     from status_checker import StatusChecker
     result = StatusChecker(cfg).check_env(env_name)
     return EnvLiveStatusSchema(**result.as_dict())
+
+
+@app.get(
+    "/api/envs/{env_name}/pods",
+    response_model=EnvPodsSchema,
+    tags=["Status"],
+    summary="Live pod list for an environment namespace",
+)
+def get_env_pods(env_name: str):
+    """
+    Fetch all pods currently running in the environment's Kubernetes namespace.
+    Uses the same token resolution as the status endpoints.
+    """
+    if not cfg.env_path(env_name).exists():
+        raise HTTPException(status_code=404, detail=f"Environment '{env_name}' not found")
+    from status_checker import StatusChecker
+    result = StatusChecker(cfg).check_env_pods(env_name)
+    return EnvPodsSchema(**result.as_dict())
+
+
+@app.get(
+    "/api/clusters/{cluster_name}/live",
+    response_model=ClusterLiveSchema,
+    tags=["Clusters"],
+    summary="Live cluster view: nodes and pods grouped by namespace",
+)
+def get_cluster_live(cluster_name: str):
+    """
+    Fetch live cluster state: node status + all pods across all namespaces
+    grouped by namespace. Useful for a full cluster topology view.
+    """
+    known = {c.name for c in cfg.list_clusters()}
+    if cluster_name not in known:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster_name}' not found")
+    from status_checker import StatusChecker
+    result = StatusChecker(cfg).check_cluster_live(cluster_name)
+    return ClusterLiveSchema(**result.as_dict())
 
 
 # ── Deployments ───────────────────────────────────────────────────────────────

@@ -12,7 +12,9 @@
 #   ./bootstrap/bootstrap.sh                                  # interactive
 #   ./bootstrap/bootstrap.sh --config testenv/bootstrap-config.yaml  # non-interactive
 #   ./bootstrap/bootstrap.sh --target /path/to/my-platform    # explicit target dir
-#   ./bootstrap/bootstrap.sh --force                          # re-bootstrap (overwrite)
+#
+# Bootstrap is idempotent: existing remote repos are reused, existing local
+# platform-instance is reused (git not re-initialised). Run freely.
 #
 # To remove a previously bootstrapped platform:
 #   ./bootstrap/delete.sh [--config ...]
@@ -37,7 +39,6 @@ PLATFORM_SRC="${TOOLKIT_ROOT}/platform"
 
 CONFIG_FILE=""
 TARGET_DIR=""
-FORCE=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -47,8 +48,6 @@ while [[ $# -gt 0 ]]; do
         --target|-t)
             [[ -z "${2:-}" ]] && die "--target requires a DIR argument"
             TARGET_DIR="$2"; shift 2 ;;
-        --force)
-            FORCE=1; shift ;;
         --help|-h)
             grep "^#" "$0" | head -20 | sed 's/^# \?//'
             exit 0 ;;
@@ -85,18 +84,7 @@ echo "  Template: ${PLATFORM_SRC}"
 echo "  Target:   ${TARGET_DIR}"
 echo ""
 
-# ── Idempotency check ─────────────────────────────────────────────────────────
 STATE_FILE="${BOOTSTRAP_DIR}/.bootstrap-state.yaml"
-if [[ -f "$STATE_FILE" && "$FORCE" -eq 0 ]]; then
-    echo -e "  ${AMBER}Platform has already been bootstrapped (state file found).${RESET}"
-    echo ""
-    echo "  State file: ${STATE_FILE}"
-    echo ""
-    echo "  To remove the platform:     ./bootstrap/delete.sh"
-    echo "  To re-bootstrap (overwrite): ./bootstrap/bootstrap.sh --force"
-    echo ""
-    exit 0
-fi
 
 [[ ! -d "$PLATFORM_SRC" ]] && die "Platform template not found at ${PLATFORM_SRC}"
 
@@ -157,13 +145,45 @@ fi
 # ── Push to origin ─────────────────────────────────────────────────────────────
 if git remote get-url origin &>/dev/null 2>&1; then
     step "Pushing to origin"
+    PUSH_URL="$(git remote get-url origin)"
     if git push -u origin main; then
-        success "Pushed to $(git remote get-url origin)"
+        success "Pushed to ${PUSH_URL}"
+
+        # ── Re-clone for a clean working copy ─────────────────────────────────
+        # Strip embedded credentials from the push URL to get a clean clone URL.
+        CLONE_URL=$(python3 -c "
+from urllib.parse import urlparse, urlunparse
+u = urlparse('${PUSH_URL}')
+netloc = u.hostname + (':' + str(u.port) if u.port else '')
+print(urlunparse(u._replace(netloc=netloc)))
+")
+        step "Replacing initialised repo with a clean clone"
+        PARENT_DIR="$(dirname "${TARGET_DIR}")"
+        CLONE_NAME="$(basename "${TARGET_DIR}")"
+        cd "${PARENT_DIR}"
+        rm -rf "${TARGET_DIR}"
+        if git clone "${CLONE_URL}" "${CLONE_NAME}"; then
+            success "Platform instance cloned at ${TARGET_DIR}"
+            TARGET_DIR="${PARENT_DIR}/${CLONE_NAME}"
+            # Re-install Node deps (node_modules not committed)
+            if command -v node &>/dev/null && [[ -d "${TARGET_DIR}/dashboard/frontend" ]]; then
+                step "Installing Node dependencies in cloned instance"
+                cd "${TARGET_DIR}/dashboard/frontend" && npm install --silent && cd -
+                success "Node dependencies installed"
+            fi
+        else
+            warn "Clone failed — the push succeeded but you will need to clone manually:"
+            warn "  git clone ${CLONE_URL} ${TARGET_DIR}"
+        fi
     else
         warn "git push failed — local commit created successfully."
         warn "Push manually: cd ${TARGET_DIR} && git push -u origin main"
     fi
 fi
+
+# ── Node deps (no-remote path) ────────────────────────────────────────────────
+# If there was no origin to push/clone, node_modules was already installed above.
+# Nothing extra needed here.
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

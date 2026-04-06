@@ -1,9 +1,0 @@
-ap3_hosted: false
-created_at: '2026-04-06T09:30:50.698786+00:00'
-created_by: zimwip
-description: ''
-name: my-svc
-owner: team
-repo_url: https://github.com/org/repo.git
-source_mode: external
-template: springboot

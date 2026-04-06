@@ -125,10 +125,10 @@ function WarningBox({ warnings }) {
   );
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, width = 500 }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ ...card, width: 500, maxHeight: "90vh", overflowY: "auto", position: "relative" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ ...card, width, maxWidth: "92vw", maxHeight: "90vh", overflowY: "auto", position: "relative" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <h3 style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 600, color: C.text }}>{title}</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 20, lineHeight: 1 }}>×</button>
@@ -1361,6 +1361,125 @@ const LIVE_STATUS_DOT = {
   unknown:  { color: "#8a8880", label: "Unknown — cluster unreachable" },
 };
 
+const POD_PHASE_COLOR = {
+  Running:   C.teal,
+  Pending:   C.amber,
+  Failed:    C.coral,
+  Error:     C.coral,
+  Succeeded: C.muted,
+  Unknown:   C.muted,
+};
+
+function PodTable({ pods }) {
+  if (!pods || pods.length === 0) {
+    return <div style={{ color: C.muted, textAlign: "center", padding: "20px 0", fontSize: 13 }}>No pods found in namespace.</div>;
+  }
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+            {["Pod", "Status", "Ready", "Restarts", "Age", "Image"].map((h) => (
+              <th key={h} style={{ textAlign: "left", padding: "6px 10px", color: C.muted, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 500 }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {pods.map((pod) => {
+            const color = POD_PHASE_COLOR[pod.phase] || C.muted;
+            const mainImage = pod.containers[0]?.image || "—";
+            const imgShort = mainImage.split("/").pop();
+            return (
+              <tr key={pod.name} style={{ borderBottom: `1px solid ${C.border}22` }}>
+                <td style={{ padding: "7px 10px", fontFamily: "'IBM Plex Mono', monospace", color: C.text, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pod.name}</td>
+                <td style={{ padding: "7px 10px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                    <span style={{ color }}>{pod.phase}</span>
+                  </span>
+                </td>
+                <td style={{ padding: "7px 10px", fontFamily: "'IBM Plex Mono', monospace", color: C.muted }}>{pod.ready}</td>
+                <td style={{ padding: "7px 10px", fontFamily: "'IBM Plex Mono', monospace", color: pod.restarts > 0 ? C.amber : C.muted }}>{pod.restarts}</td>
+                <td style={{ padding: "7px 10px", fontFamily: "'IBM Plex Mono', monospace", color: C.muted }}>{pod.age}</td>
+                <td style={{ padding: "7px 10px", fontFamily: "'IBM Plex Mono', monospace", color: C.muted, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={mainImage}>{imgShort}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EnvPodsModal({ env, onClose }) {
+  const [data,        setData]        = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const result = await api.get(`/envs/${env.name}/pods`);
+    setData(result?.error ? null : result);
+    setLoading(false);
+  }, [env.name]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, [autoRefresh, load]);
+
+  return (
+    <Modal title={`Live Pods — ${env.name}`} onClose={onClose} width={940}>
+      {/* Sub-header: namespace / cluster + controls */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 11, color: C.muted, fontFamily: "'IBM Plex Mono', monospace" }}>
+          {data ? `ns: ${data.namespace}  ·  cluster: ${data.cluster}` : "—"}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button
+            style={{ ...btn(autoRefresh ? C.teal : C.muted, true), fontSize: 11, padding: "3px 10px" }}
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            title="Auto-refresh every 30 s"
+          >
+            ⟳ {autoRefresh ? "30s" : "off"}
+          </button>
+          <button
+            style={{ ...btn(C.blue, true), fontSize: 11, padding: "3px 10px" }}
+            onClick={load}
+            disabled={loading}
+          >
+            {loading ? <Spinner /> : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {/* Unreachable banner */}
+      {data && !data.reachable && (
+        <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 6, background: `${C.coral}15`, border: `1px solid ${C.coral}44`, color: C.coral, fontSize: 12 }}>
+          Cluster unreachable — {data.error || "no cluster access configured"}
+        </div>
+      )}
+
+      {/* Timestamp + count */}
+      {data?.checked_at && (
+        <div style={{ marginBottom: 10, fontSize: 11, color: C.muted, fontFamily: "'IBM Plex Mono', monospace" }}>
+          {data.checked_at.slice(11, 19)} UTC · {data.pods?.length ?? 0} pod{data.pods?.length !== 1 ? "s" : ""}
+        </div>
+      )}
+
+      {/* Pod table */}
+      {loading && !data ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", color: C.muted, padding: 20 }}><Spinner /> Loading pods…</div>
+      ) : (
+        <PodTable pods={data?.pods || []} />
+      )}
+    </Modal>
+  );
+}
+
 function EnvCard({ env, onDestroy, onDiff, onExtended }) {
   const isPoc = env.type === "poc";
   const isExpired = env.expiry_status === "expired";
@@ -1375,6 +1494,7 @@ function EnvCard({ env, onDestroy, onDiff, onExtended }) {
 
   const [liveStatus, setLiveStatus] = useState(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [showPods, setShowPods] = useState(false);
 
   const checkStatus = async () => {
     setStatusLoading(true);
@@ -1410,6 +1530,13 @@ function EnvCard({ env, onDestroy, onDiff, onExtended }) {
             title="Check live cluster status"
           >
             {statusLoading ? "…" : liveStatus ? "Refresh" : "Status"}
+          </button>
+          <button
+            style={{ ...btn(C.purple, true), fontSize: 11, padding: "4px 10px" }}
+            onClick={() => setShowPods(true)}
+            title="View live pods for this environment"
+          >
+            Pods
           </button>
           <button style={{ ...btn(C.blue, true), fontSize: 11, padding: "4px 10px" }} onClick={() => onDiff(env.name)}>Diff</button>
           {isPoc && (
@@ -1476,6 +1603,9 @@ function EnvCard({ env, onDestroy, onDiff, onExtended }) {
           <span>Expires: {env.expires_at.slice(0, 10)}</span>
         )}
       </div>
+
+      {/* Live pods modal */}
+      {showPods && <EnvPodsModal env={env} onClose={() => setShowPods(false)} />}
     </div>
   );
 }
@@ -2152,6 +2282,195 @@ function PlatformPanel() {
   );
 }
 
+// ── Cluster live view ─────────────────────────────────────────────────────────
+
+function ClusterLivePanel() {
+  const [clusters,        setClusters]        = useState([]);
+  const [selectedCluster, setSelectedCluster] = useState(null);
+  const [liveData,        setLiveData]        = useState(null);
+  const [loading,         setLoading]         = useState(false);
+  const [clusterLoading,  setClusterLoading]  = useState(true);
+  const [autoRefresh,     setAutoRefresh]     = useState(false);
+  const [expandedNs,      setExpandedNs]      = useState(null);
+
+  useEffect(() => {
+    api.get("/clusters").then((c) => {
+      setClusters(c || []);
+      if (c?.length > 0) setSelectedCluster(c[0].name);
+      setClusterLoading(false);
+    });
+  }, []);
+
+  const loadLive = useCallback(async () => {
+    if (!selectedCluster) return;
+    setLoading(true);
+    const data = await api.get(`/clusters/${selectedCluster}/live`);
+    setLiveData(data?.error ? null : data);
+    setLoading(false);
+  }, [selectedCluster]);
+
+  useEffect(() => { if (selectedCluster) { setLiveData(null); loadLive(); } }, [selectedCluster]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(loadLive, 30000);
+    return () => clearInterval(id);
+  }, [autoRefresh, loadLive]);
+
+  const nodeStatusColor = (s) => s === "Ready" ? C.teal : s === "NotReady" ? C.coral : C.muted;
+
+  return (
+    <div>
+      <SectionHeader
+        label="05 — Cluster"
+        title="Cluster Live View"
+        action={
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              style={{ ...btn(autoRefresh ? C.teal : C.muted, true), fontSize: 12 }}
+              onClick={() => setAutoRefresh((v) => !v)}
+            >
+              ⟳ {autoRefresh ? "Auto on" : "Auto off"}
+            </button>
+            <button style={{ ...btn(C.blue, true), fontSize: 12 }} onClick={loadLive} disabled={loading}>
+              {loading ? <Spinner /> : "Refresh"}
+            </button>
+          </div>
+        }
+      />
+
+      {/* Cluster selector */}
+      {!clusterLoading && clusters.length > 1 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+          {clusters.map((c) => {
+            const color = c.platform === "aws" ? C.amber : C.teal;
+            return (
+              <button
+                key={c.name}
+                onClick={() => { setSelectedCluster(c.name); setExpandedNs(null); }}
+                style={{
+                  padding: "6px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  border: `1px solid ${selectedCluster === c.name ? color : C.border}`,
+                  background: selectedCluster === c.name ? `${color}15` : "transparent",
+                  color: selectedCluster === c.name ? color : C.muted,
+                }}
+              >
+                {c.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {clusterLoading ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", color: C.muted, padding: 16 }}><Spinner /> Loading clusters…</div>
+      ) : clusters.length === 0 ? (
+        <div style={{ ...card, color: C.muted, textAlign: "center", padding: 32 }}>
+          No cluster profiles defined. Add clusters in the Platform tab.
+        </div>
+      ) : loading && !liveData ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", color: C.muted, padding: 16 }}><Spinner /> Fetching live cluster data…</div>
+      ) : liveData && !liveData.reachable ? (
+        <div style={{ ...card, borderLeft: `3px solid ${C.coral}`, padding: "14px 20px", color: C.coral, fontSize: 13 }}>
+          Cluster unreachable — {liveData.error}
+        </div>
+      ) : liveData ? (
+        <>
+          {/* Summary stats */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
+            {[
+              { label: "Nodes",      value: liveData.nodes.length,                                              color: C.blue   },
+              { label: "Namespaces", value: liveData.namespaces.length,                                         color: C.purple },
+              { label: "Pods",       value: liveData.namespaces.reduce((s, n) => s + n.pod_count, 0),           color: C.teal   },
+              { label: "Running",    value: liveData.namespaces.reduce((s, n) => s + n.running,   0),           color: C.teal   },
+              { label: "Pending",    value: liveData.namespaces.reduce((s, n) => s + n.pending,   0),           color: C.amber  },
+              { label: "Failed",     value: liveData.namespaces.reduce((s, n) => s + n.failed,    0),           color: C.coral  },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ ...card, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 4, minWidth: 96 }}>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 500, color }}>{value}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Nodes */}
+          {liveData.nodes.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 12, color: C.blue, marginBottom: 10, fontFamily: "'IBM Plex Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                Nodes — {liveData.nodes.length}
+              </div>
+              <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                      {["Node", "Status", "Roles", "Version", "OS"].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: "9px 16px", color: C.muted, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 500 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveData.nodes.map((node) => (
+                      <tr key={node.name} style={{ borderBottom: `1px solid ${C.border}22` }}>
+                        <td style={{ padding: "9px 16px", fontFamily: "'IBM Plex Mono', monospace", color: C.text }}>{node.name}</td>
+                        <td style={{ padding: "9px 16px" }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: nodeStatusColor(node.status) }} />
+                            <span style={{ color: nodeStatusColor(node.status) }}>{node.status}</span>
+                          </span>
+                        </td>
+                        <td style={{ padding: "9px 16px", color: C.muted }}>{node.roles}</td>
+                        <td style={{ padding: "9px 16px", fontFamily: "'IBM Plex Mono', monospace", color: C.muted, fontSize: 11 }}>{node.version}</td>
+                        <td style={{ padding: "9px 16px", color: C.muted, fontSize: 11 }}>{node.os}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Namespaces + pod drill-down */}
+          <div>
+            <div style={{ fontSize: 12, color: C.purple, marginBottom: 10, fontFamily: "'IBM Plex Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              Namespaces — {liveData.namespaces.length}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {liveData.namespaces.map((ns) => {
+                const isExpanded = expandedNs === ns.name;
+                return (
+                  <div key={ns.name} style={{ ...card, padding: 0, overflow: "hidden" }}>
+                    <button
+                      onClick={() => setExpandedNs(isExpanded ? null : ns.name)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", background: "none", border: "none", cursor: "pointer", color: C.text, textAlign: "left" }}
+                    >
+                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: C.text, flex: 1 }}>{ns.name}</span>
+                      <span style={{ fontSize: 11, color: C.muted, fontFamily: "'IBM Plex Mono', monospace" }}>{ns.pod_count} pod{ns.pod_count !== 1 ? "s" : ""}</span>
+                      {ns.running > 0  && <span style={{ ...pill(C.teal),   fontSize: 10 }}>{ns.running} running</span>}
+                      {ns.pending > 0  && <span style={{ ...pill(C.amber),  fontSize: 10 }}>{ns.pending} pending</span>}
+                      {ns.failed  > 0  && <span style={{ ...pill(C.coral),  fontSize: 10 }}>{ns.failed} failed</span>}
+                      <span style={{ color: C.muted, fontSize: 12 }}>{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    {isExpanded && (
+                      <div style={{ borderTop: `1px solid ${C.border}` }}>
+                        <PodTable pods={ns.pods} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16, fontSize: 11, color: C.muted, fontFamily: "'IBM Plex Mono', monospace" }}>
+            Checked: {liveData.checked_at?.slice(11, 19)} UTC{autoRefresh ? " · auto-refresh every 30s" : ""}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 // ── App shell ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -2180,7 +2499,7 @@ export default function App() {
           <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 700, color: C.text }}>AP3 Platform</div>
         </div>
         <nav style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
-          {[["services", "Services"], ["envs", "Environments"], ["history", "History"], ["platform", "Platform"]].map(([id, label]) => (
+          {[["services", "Services"], ["envs", "Environments"], ["history", "History"], ["platform", "Platform"], ["cluster", "Cluster"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} style={{ padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", border: `1px solid ${tab === id ? C.border2 : "transparent"}`, background: tab === id ? C.bg3 : "transparent", color: tab === id ? C.text : C.muted }}>
               {label}
             </button>
@@ -2194,6 +2513,7 @@ export default function App() {
         {tab === "envs"     && <EnvsPanel />}
         {tab === "history"  && <HistoryPanel />}
         {tab === "platform" && <PlatformPanel />}
+        {tab === "cluster"  && <ClusterLivePanel />}
       </main>
     </>
   );

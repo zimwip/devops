@@ -283,6 +283,21 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--force", action="store_true",
                     help="Remove even if services in the catalog reference this template")
 
+    lib = sub.add_parser("library", aliases=["lib"],
+                         help="Manage library references in platform.yaml")
+    lib_sub = lib.add_subparsers(dest="action", required=True)
+
+    lib_sub.add_parser("list", help="List all registered library repos")
+
+    la = lib_sub.add_parser("register",
+                             help="Register an existing library repo (no push)")
+    la.add_argument("--name",       required=True, help="Library name (e.g. my-lib)")
+    la.add_argument("--repo-url",   required=True, dest="repo_url",
+                    help="Git URL of the library repo")
+    la.add_argument("--source-dir", default="", dest="source_dir",
+                    help="Relative path to the library source in the toolkit root "
+                         "(e.g. lib-extras/my-lib)")
+
     return parser
 
 
@@ -452,6 +467,31 @@ def main():
                 print(_json.dumps([r.as_dict() for r in results], indent=2))
             else:
                 print(format_status_table(results))
+
+        elif args.resource in ("library", "lib"):
+            if args.action == "list":
+                libs = cfg.list_libraries()
+                if args.json:
+                    import json as _json
+                    print(_json.dumps(libs, indent=2))
+                else:
+                    if not libs:
+                        print("  (no libraries registered)")
+                    else:
+                        for lib in libs:
+                            src = f"  src: {lib['source_dir']}" if lib.get("source_dir") else ""
+                            print(f"  {lib['name']}")
+                            print(f"    url: {lib.get('repo_url', '—')}")
+                            if src:
+                                print(src)
+            elif args.action == "register":
+                cfg.save_library(args.name, args.repo_url, args.source_dir)
+                if args.json:
+                    import json as _json
+                    print(_json.dumps({"status": "registered", "name": args.name,
+                                       "repo_url": args.repo_url}))
+                else:
+                    print(f"  Library '{args.name}' registered → {args.repo_url}")
 
         elif args.resource == "history":
             collector = HistoryCollector(cfg)
