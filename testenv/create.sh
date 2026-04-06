@@ -418,6 +418,13 @@ step "Kubernetes ServiceAccount"
 kubectl apply -f "$SCRIPT_DIR/k8s/jenkins-sa.yaml"
 ok "SA resources applied"
 
+# Create platform namespaces used for service deployments.
+# In the testenv a single k3d cluster hosts all three environments, each
+# isolated in its own namespace (platform-dev / platform-val / platform-prod).
+step "Platform namespaces"
+kubectl apply -f "$SCRIPT_DIR/k8s/platform-namespaces.yaml"
+ok "platform-dev / platform-val / platform-prod ready"
+
 info "Waiting for SA token …"
 K8S_SA_TOKEN=""
 for i in $(seq 1 20); do
@@ -431,12 +438,13 @@ done
 update_env "K8S_SA_TOKEN" "$K8S_SA_TOKEN"
 ok "SA token retrieved"
 
-# k3d exposes the Kubernetes API on the host at 0.0.0.0:K3D_API_HOST_PORT.
-# Jenkins runs in a Podman container; Podman injects host.containers.internal
-# into every container's /etc/hosts pointing to the host machine.
-K8S_API_URL="https://host.containers.internal:${K3D_API_HOST_PORT}"
+# Jenkins joins the k3d-ap3 Podman network (declared in docker-compose.yml),
+# so it can reach the k3d loadbalancer container directly at port 6443.
+# This avoids host port-forwarding (host.containers.internal:6550) which is
+# blocked by Netavark nft rules when Jenkins is on a different bridge network.
+K8S_API_URL="https://k3d-${CLUSTER_NAME}-serverlb:6443"
 update_env "K8S_API_URL" "$K8S_API_URL"
-ok "k3d API (via host.containers.internal): $K8S_API_URL"
+ok "k3d API (via k3d network): $K8S_API_URL"
 
 source "$ENV_FILE"
 
@@ -612,6 +620,54 @@ if [[ "${SONARQUBE_TOKEN:-__PENDING__}" == "__PENDING__" ]]; then
 fi
 
 source "$ENV_FILE"
+
+# ─── Gitea → k3d DNS registration ────────────────────────────────────────────
+# k3d pods use CoreDNS which has no knowledge of Docker/Podman compose service
+# names. Connect Gitea to the k3d network and inject its IP into the CoreDNS
+# NodeHosts file so that 'gitea' resolves inside every agent pod.
+
+step "Gitea k3d DNS"
+
+docker network connect "k3d-${CLUSTER_NAME}" ap3-gitea 2>/dev/null && \
+    ok "Gitea connected to k3d-${CLUSTER_NAME}" || \
+    ok "Gitea already on k3d-${CLUSTER_NAME} network"
+
+# Extract Gitea's IP on the k3d network by inspecting the network JSON directly.
+# docker network inspect returns a Containers map keyed by container ID;
+# we use python3 to find the entry whose Name matches ap3-gitea.
+GITEA_K3D_IP=$(docker network inspect "k3d-${CLUSTER_NAME}" 2>/dev/null \
+    | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+containers = data[0].get('Containers', {}) if data else {}
+for c in containers.values():
+    if c.get('Name') == 'ap3-gitea':
+        print(c.get('IPv4Address','').split('/')[0])
+        break
+" 2>/dev/null || true)
+
+if [[ -z "$GITEA_K3D_IP" ]]; then
+    warn "Could not determine Gitea IP on k3d-${CLUSTER_NAME} — CoreDNS patch skipped."
+    warn "k3d pods may not resolve 'gitea'. Re-run: bash testenv/create.sh (idempotent)."
+else
+    ok "Gitea IP on k3d-${CLUSTER_NAME}: ${GITEA_K3D_IP}"
+
+    # k3s CoreDNS serves the NodeHosts ConfigMap key as /etc/coredns/NodeHosts.
+    # Adding 'gitea' there makes it resolve for all pods without restarting CoreDNS
+    # (the hosts plugin reloads on a 15s interval by default).
+    CURRENT_NODEHOSTS=$(kubectl -n kube-system get configmap coredns \
+        -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "")
+
+    if echo "$CURRENT_NODEHOSTS" | grep -q " gitea$"; then
+        ok "CoreDNS already has entry for gitea"
+    else
+        NEW_NODEHOSTS="${CURRENT_NODEHOSTS}
+${GITEA_K3D_IP} gitea"
+        kubectl -n kube-system patch configmap coredns --type=merge \
+            -p "{\"data\":{\"NodeHosts\":$(echo "$NEW_NODEHOSTS" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}}"
+        ok "CoreDNS patched: gitea → ${GITEA_K3D_IP}"
+    fi
+fi
 
 # ─── Phase 2: Jenkins ─────────────────────────────────────────────────────────
 

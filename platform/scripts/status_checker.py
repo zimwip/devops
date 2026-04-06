@@ -393,6 +393,11 @@ class StatusChecker:
         for pod in all_pods:
             ns_map.setdefault(pod.namespace, []).append(pod)
 
+        # Seed ns_map with every declared namespace so that empty ones still appear
+        all_ns_names, _, _ = self._fetch_namespaces(profile, token)
+        for ns_name in all_ns_names:
+            ns_map.setdefault(ns_name, [])
+
         namespaces = []
         for ns_name, ns_pods in sorted(ns_map.items(), key=lambda x: -len(x[1])):
             running = sum(1 for p in ns_pods if p.phase == "Running")
@@ -408,6 +413,61 @@ class StatusChecker:
             cluster=cluster_name, reachable=True,
             checked_at=_now(), nodes=nodes, namespaces=namespaces,
         )
+
+    def _fetch_namespaces(
+        self, profile, token: Optional[str] = None,
+    ) -> tuple[list[str], bool, Optional[str]]:
+        """Return all namespace names in the cluster."""
+        if token is None:
+            token = self._resolve_token(profile)
+        if token and profile.api_url:
+            result, err = self._fetch_namespaces_via_api(profile.api_url, token)
+            if result is not None:
+                return result, True, None
+            error_hint = err
+        else:
+            error_hint = None
+        if profile.context:
+            result, err = self._fetch_namespaces_via_kubectl(profile.context)
+            if result is not None:
+                return result, True, None
+            return [], False, err or error_hint
+        return [], False, error_hint or "No cluster access configured"
+
+    def _fetch_namespaces_via_api(
+        self, api_url: str, token: str,
+    ) -> tuple[Optional[list[str]], Optional[str]]:
+        try:
+            import requests as _req
+            url = f"{api_url.rstrip('/')}/api/v1/namespaces"
+            resp = _req.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                verify=False, timeout=10,
+            )
+            if resp.status_code != 200:
+                return None, f"Cluster API returned HTTP {resp.status_code}"
+            items = resp.json().get("items", [])
+            return [i["metadata"]["name"] for i in items], None
+        except Exception as e:
+            return None, f"API request failed: {e}"
+
+    def _fetch_namespaces_via_kubectl(
+        self, context: str,
+    ) -> tuple[Optional[list[str]], Optional[str]]:
+        try:
+            result = subprocess.run(
+                ["kubectl", "get", "namespaces", "--context", context, "-o", "json"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                return None, f"kubectl failed: {result.stderr.strip()[:200]}"
+            items = json.loads(result.stdout).get("items", [])
+            return [i["metadata"]["name"] for i in items], None
+        except FileNotFoundError:
+            return None, "kubectl not found in PATH"
+        except Exception as e:
+            return None, f"kubectl failed: {e}"
 
     def _fetch_pods(
         self, profile, namespace: str, token: Optional[str] = None,

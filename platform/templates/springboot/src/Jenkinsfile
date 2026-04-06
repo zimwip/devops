@@ -14,4 +14,4 @@ library(
                            credentialsId: 'github-token'])
 )
 
-buildService(template: 'springboot')
+buildService()

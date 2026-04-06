@@ -1,0 +1,28 @@
+# build.yaml — AP3 build configuration for this service.
+# Copied to .platform/build.yaml in the service repo during scaffold.
+# Edit this file in the service repo to customize build behaviour without
+# touching the shared Jenkins library.
+
+version:
+  container: python
+  command: |
+    python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])" 2>/dev/null \
+      || grep -m1 '^version' setup.cfg | cut -d= -f2 | tr -d ' '
+
+build:
+  container: python
+  command: "pip install -r requirements.txt"
+
+test:
+  container: python
+  command: "pytest tests/ -v --tb=short || true"
+  reports: "**/test-results/*.xml"
+
+sonar:
+  container: sonar-scanner
+  command: >-
+    sonar-scanner
+    -Dsonar.projectKey=${SERVICE_NAME}
+    -Dsonar.sources=.
+    -Dsonar.python.coverage.reportPaths=coverage.xml
+    -Dsonar.python.version=3

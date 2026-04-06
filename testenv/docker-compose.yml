@@ -97,6 +97,20 @@ services:
       - sonarqube
       - registry
       - gitea
+    # Make the host machine reachable from inside the Jenkins container.
+    # This is required so the Kubernetes plugin can reach the k3d API at
+    # host.containers.internal:6550 (K8S_API_URL).
+    # - host.containers.internal: Podman's conventional hostname for the host.
+    # - host.docker.internal: Docker's conventional hostname (Mac/Windows native;
+    #   needs host-gateway on Linux).
+    # host-gateway is a Compose special value that resolves to the host's gateway
+    # IP and works with both Docker Compose V2 and podman-compose.
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+      # k3d injects host.k3d.internal into pod /etc/hosts → host machine.
+      # Add it here too so the Jenkins controller uses the same hostname as pods.
+      - "host.k3d.internal:host-gateway"
     environment:
       JENKINS_ADMIN_USER: "${JENKINS_ADMIN_USER}"
       JENKINS_ADMIN_PASSWORD: "${JENKINS_ADMIN_PASSWORD}"
@@ -107,6 +121,8 @@ services:
       GITHUB_TOKEN: "${GITHUB_TOKEN:-placeholder-set-in-env}"
       # Docker-internal hostname — used by JCasC (giteaServers, globalLibraries).
       # Must NOT be localhost:3000 (that resolves to Jenkins itself inside the container).
+      # k3d pods resolve 'gitea' via CoreDNS patched in create.sh (Gitea is connected
+      # to the k3d-ap3 network and its IP is added to the CoreDNS NodeHosts entry).
       GITEA_URL: "http://gitea:3000"
       GITEA_ORG: "${GITEA_ORG:-ap3}"
       SHARED_LIB_REPO_NAME: "${SHARED_LIB_REPO_NAME:-jenkins-shared-lib}"
@@ -116,7 +132,18 @@ services:
     volumes:
       - jenkins_data:/var/jenkins_home
       - ./jenkins/casc:/var/jenkins_home/casc_configs:ro,z
+    # Join the k3d Podman network so Jenkins can reach the k3d API server
+    # directly at k3d-ap3-serverlb:6443, avoiding host port-forwarding.
+    # The k3d-ap3 network is created by k3d before Jenkins starts.
+    networks:
+      - default
+      - k3d-ap3
     restart: unless-stopped
+
+networks:
+  k3d-ap3:
+    external: true
+    name: k3d-ap3
 
 volumes:
   postgres_data:

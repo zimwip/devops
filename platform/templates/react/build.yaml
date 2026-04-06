@@ -1,0 +1,25 @@
+# build.yaml — AP3 build configuration for this service.
+# Copied to .platform/build.yaml in the service repo during scaffold.
+# Edit this file in the service repo to customize build behaviour without
+# touching the shared Jenkins library.
+
+version:
+  container: node
+  command: "node -e \"console.log(require('./package.json').version)\""
+
+build:
+  container: node
+  command: "npm ci && npm run build"
+
+test:
+  container: node
+  command: "npm test -- --watchAll=false --passWithNoTests"
+  reports: "**/test-results/*.xml"
+
+sonar:
+  container: sonar-scanner
+  command: >-
+    sonar-scanner
+    -Dsonar.projectKey=${SERVICE_NAME}
+    -Dsonar.sources=src
+    -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info

@@ -701,11 +701,29 @@ class ServiceCreator:
     def _scaffold(self, target: Path, name: str, template: str,
                   owner: str, description: str, ap3_hosted: bool = True):
         step(f"Scaffolding '{name}' from template '{template}'")
-        src = self.cfg.templates_dir / template
-        if not src.exists():
-            error_exit(f"Template '{template}' not found at {src}")
+        tpl_root = self.cfg.templates_dir / template
+        if not tpl_root.exists():
+            error_exit(f"Template '{template}' not found at {tpl_root}")
+        # New layout: source files live in src/, metadata (template.yaml, build.yaml) at root.
+        # Legacy layout: all files at root (no src/ subdir).
+        src_dir = tpl_root / "src"
+        if src_dir.exists():
+            copy_src = src_dir
+        else:
+            # Legacy: copy everything except template.yaml
+            copy_src = tpl_root
         if not self.dry_run:
-            shutil.copytree(src, target)
+            if copy_src == tpl_root:
+                shutil.copytree(copy_src, target,
+                                ignore=shutil.ignore_patterns("template.yaml"))
+            else:
+                shutil.copytree(copy_src, target)
+            # Copy build config into .platform/ so the shared lib can read it
+            build_yaml = tpl_root / "build.yaml"
+            if build_yaml.exists():
+                platform_dir = target / ".platform"
+                platform_dir.mkdir(exist_ok=True)
+                shutil.copy2(build_yaml, platform_dir / "build.yaml")
             self._replace_placeholders(target, name, owner, description)
             ap3_dir = target / ".ap3"
             ap3_dir.mkdir(exist_ok=True)

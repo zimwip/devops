@@ -57,6 +57,15 @@ class TemplateManager:
         if self.json_output:
             print(json.dumps(tpl, indent=2))
             return
+        tpl_dir = self.cfg.templates_dir / name
+        src_dir = tpl_dir / "src"
+        if src_dir.exists():
+            files = sorted(f.name for f in src_dir.iterdir())
+            files_label = "src/"
+        else:
+            files = sorted(f.name for f in tpl_dir.iterdir() if f.name != "template.yaml")
+            files_label = "(legacy) "
+        has_build = (tpl_dir / "build.yaml").exists()
         print(f"\n  Template    : {name}")
         print(f"  {'─' * 40}")
         print(f"  Language    : {tpl.get('language', '—')}")
@@ -65,8 +74,8 @@ class TemplateManager:
             print(f"  Created     : {tpl['created_at'][:10]}")
         if tpl.get("created_by"):
             print(f"  Added by    : {tpl['created_by']}")
-        files = [f.name for f in (self.cfg.templates_dir / name).iterdir()]
-        print(f"  Files       : {', '.join(sorted(files))}")
+        print(f"  Build cfg   : {'yes (build.yaml)' if has_build else 'no — shared lib falls back to template name'}")
+        print(f"  Src files   : {files_label}{', '.join(files)}")
         print()
 
     def add(
@@ -105,12 +114,17 @@ class TemplateManager:
                 shutil.rmtree(target)
             shutil.copytree(source, target)
 
+            # Validate expected structure
+            if not (target / "src").exists():
+                warn(f"No src/ directory found — scaffold will use legacy flat layout.")
+            if not (target / "build.yaml").exists():
+                warn(f"No build.yaml found — Jenkins shared lib will fall back to template-name matching.")
+
             # Infer description from README.md if not provided
-            if not description:
-                readme = target / "README.md"
-                if readme.exists():
-                    first = readme.read_text(errors="replace").split("\n")[0]
-                    description = first.lstrip("# ").strip()
+            readme = (target / "src" / "README.md") if (target / "src").exists() else (target / "README.md")
+            if not description and readme.exists():
+                first = readme.read_text(errors="replace").split("\n")[0]
+                description = first.lstrip("# ").strip()
 
             # Write template.yaml
             meta = {

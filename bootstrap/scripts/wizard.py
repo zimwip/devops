@@ -939,7 +939,7 @@ def _create_platform_repo(cfg: PlatformConfig, repo_name: str):
             check=True, capture_output=True,
         )
 
-    # Create repo via API (422 = already exists — treat as OK)
+    # Create repo via API (409=Gitea already exists, 422=GitHub already exists — treat as OK)
     payload = {"name": repo_name, "private": False, "auto_init": False}
     resp = requests.post(
         cfg.github_repos_api(),
@@ -948,7 +948,7 @@ def _create_platform_repo(cfg: PlatformConfig, repo_name: str):
                  "Accept": "application/vnd.github.v3+json"},
         timeout=15,
     )
-    if resp.status_code not in (201, 422):
+    if resp.status_code not in (201, 409, 422):
         raise RuntimeError(
             f"Failed to create repo '{repo_name}': HTTP {resp.status_code} — {resp.text[:200]}"
         )
@@ -966,6 +966,7 @@ def _upload_dir_via_api(cfg: PlatformConfig, repo_name: str, lib_dir: Path):
     content.  The remote creates one commit per file — no local git operations.
 
     Works with both GitHub REST API v3 and Gitea (same endpoint).
+    Handles re-runs by fetching the existing file SHA before updating.
     """
     import base64, requests
 
@@ -979,13 +980,21 @@ def _upload_dir_via_api(cfg: PlatformConfig, repo_name: str, lib_dir: Path):
     for file_path in files:
         rel = file_path.relative_to(lib_dir).as_posix()
         content_b64 = base64.b64encode(file_path.read_bytes()).decode()
-        resp = requests.put(
-            f"{base_url}/{rel}",
-            json={"message": f"chore: add {rel}", "content": content_b64, "branch": "main"},
-            headers=headers,
-            timeout=15,
-        )
-        if resp.status_code not in (200, 201):
+
+        # Gitea: POST to create a new file, PUT to update an existing one.
+        # GitHub: PUT handles both (SHA optional on create, required on update).
+        body: dict = {"message": f"chore: add {rel}", "content": content_b64, "branch": "main"}
+        get_resp = requests.get(f"{base_url}/{rel}", headers=headers, timeout=15)
+        if get_resp.status_code == 200:
+            # File exists — update it (PUT + SHA)
+            body["sha"] = get_resp.json()["sha"]
+            method, expected = requests.put, (200,)
+        else:
+            # File does not exist — create it (POST on Gitea, PUT on GitHub both work)
+            method, expected = requests.post, (201,)
+
+        resp = method(f"{base_url}/{rel}", json=body, headers=headers, timeout=15)
+        if resp.status_code not in expected and resp.status_code not in (200, 201):
             raise RuntimeError(
                 f"Failed to upload '{rel}' to '{repo_name}': "
                 f"HTTP {resp.status_code} — {resp.text[:200]}"
@@ -1014,28 +1023,41 @@ def _push_extra_libraries(
             continue
         step(f"Pushing library '{repo_name}' to git hosting")
 
-        # Create repo (422 = already exists)
-        payload = {"name": repo_name, "private": False, "auto_init": False}
-        resp = requests.post(
-            cfg.github_repos_api(), json=payload,
-            headers={"Authorization": f"token {cfg.github_token}",
-                     "Accept": "application/vnd.github.v3+json"},
-            timeout=15,
-        )
-        if resp.status_code not in (201, 422):
-            warn(f"Could not create repo '{repo_name}': HTTP {resp.status_code} — skipping.")
-            continue
+        api_headers = {"Authorization": f"token {cfg.github_token}",
+                       "Accept": "application/vnd.github.v3+json"}
+        repo_api = f"{cfg.github_api_base}/repos/{cfg.github_org}/{repo_name}"
+
+        # Create repo with auto_init=true so the main branch exists before
+        # we upload files via the Contents API.
+        payload = {"name": repo_name, "private": False,
+                   "auto_init": True, "default_branch": "main"}
+        resp = requests.post(cfg.github_repos_api(), json=payload,
+                             headers=api_headers, timeout=15)
         if resp.status_code == 201:
             success(f"Created repo {repo_name}")
+        elif resp.status_code in (409, 422):
+            # Repo already exists (Gitea=409, GitHub=422) — check if it has any commits.
+            # An empty repo (auto_init=false from a prior run) has no branches
+            # and the Contents API will reject all PUTs.  Delete and recreate.
+            branches = requests.get(f"{repo_api}/branches",
+                                    headers=api_headers, timeout=15)
+            if branches.status_code == 200 and len(branches.json() or []) == 0:
+                out(f"  Repo {repo_name} is empty — deleting and recreating with main branch.")
+                requests.delete(repo_api, headers=api_headers, timeout=15)
+                r2 = requests.post(cfg.github_repos_api(), json=payload,
+                                   headers=api_headers, timeout=15)
+                if r2.status_code != 201:
+                    warn(f"Could not recreate '{repo_name}': HTTP {r2.status_code} — skipping.")
+                    continue
+                success(f"Recreated repo {repo_name}")
+            else:
+                out(f"  Repo {repo_name} already exists — will update files.")
         else:
-            out(f"  Repo {repo_name} already exists — will update.")
+            warn(f"Could not create repo '{repo_name}': HTTP {resp.status_code} — skipping.")
+            continue
 
         # Upload files via Contents API (server-side commits, no local git)
-        try:
-            _upload_dir_via_api(cfg, repo_name, lib_dir)
-        except Exception as e:
-            warn(f"Failed to upload files to '{repo_name}': {e}")
-            continue
+        _upload_dir_via_api(cfg, repo_name, lib_dir)
 
         # Track in platform.yaml libraries map and create libs/<name>.yaml
         lib_url    = f"{cfg.github_url.rstrip('/')}/{cfg.github_org}/{repo_name}.git"

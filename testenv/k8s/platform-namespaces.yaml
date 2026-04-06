@@ -1,0 +1,25 @@
+# platform-namespaces.yaml — Target namespaces for service deployments.
+#
+# In production each environment lives on its own cluster. In the local testenv
+# a single k3d cluster is used and environments are isolated by namespace:
+#
+#   platform-dev   → simulates the dev cluster   (openshift-dev)
+#   platform-val   → simulates the val cluster   (openshift-val)
+#   platform-prod  → simulates the prod cluster  (openshift-prod)
+#
+# Applied by testenv/create.sh after the k3d cluster is ready.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-val
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-prod

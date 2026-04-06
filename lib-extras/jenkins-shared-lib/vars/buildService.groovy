@@ -3,10 +3,15 @@
  *
  * Usage in a service Jenkinsfile:
  *   @Library('platform-shared-lib@v1.0') _
- *   buildService(template: 'springboot')
+ *   buildService()
+ *
+ * Build behaviour is driven by .platform/build.yaml in the service repo.
+ * Services scaffolded from older templates may still pass a 'template' param
+ * as a fallback: buildService(template: 'springboot').
  */
 def call(Map config = [:]) {
-    def template = config.get('template', 'springboot')
+    def legacyTemplate = config.get('template', 'springboot')
+    def buildCfg = [:]   // populated in Version stage from .platform/build.yaml
 
     // Pod template images — controlled here so service teams cannot override them.
     def agentYaml = """
@@ -72,19 +77,31 @@ spec:
             stage('Version') {
                 steps {
                     script {
-                        if (template == 'springboot') {
+                        // Load build config if present (new template structure)
+                        if (fileExists('.platform/build.yaml')) {
+                            buildCfg = readYaml(file: '.platform/build.yaml')
+                        }
+
+                        if (buildCfg?.version) {
+                            container(buildCfg.version.container) {
+                                env.SERVICE_VERSION = sh(
+                                    script: buildCfg.version.command,
+                                    returnStdout: true
+                                ).trim()
+                            }
+                        } else if (legacyTemplate == 'springboot') {
                             container('maven') {
                                 env.SERVICE_VERSION = sh(
                                     script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout",
                                     returnStdout: true
                                 ).trim()
                             }
-                        } else if (template == 'react') {
+                        } else if (legacyTemplate == 'react') {
                             container('node') {
                                 def pkg = readJSON file: 'package.json'
                                 env.SERVICE_VERSION = pkg.version
                             }
-                        } else if (template == 'python-api') {
+                        } else if (legacyTemplate == 'python-api') {
                             container('python') {
                                 env.SERVICE_VERSION = sh(
                                     script: "python -c \"import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])\" 2>/dev/null || grep -m1 '^version' setup.cfg | cut -d= -f2 | tr -d ' '",
@@ -104,15 +121,19 @@ spec:
             stage('Build') {
                 steps {
                     script {
-                        if (template == 'springboot') {
+                        if (buildCfg?.build) {
+                            container(buildCfg.build.container) {
+                                sh buildCfg.build.command
+                            }
+                        } else if (legacyTemplate == 'springboot') {
                             container('maven') {
                                 sh "mvn -B clean package -DskipTests"
                             }
-                        } else if (template == 'react') {
+                        } else if (legacyTemplate == 'react') {
                             container('node') {
                                 sh "npm ci && npm run build"
                             }
-                        } else if (template == 'python-api') {
+                        } else if (legacyTemplate == 'python-api') {
                             container('python') {
                                 sh "pip install -r requirements.txt"
                             }
@@ -124,15 +145,19 @@ spec:
             stage('Test') {
                 steps {
                     script {
-                        if (template == 'springboot') {
+                        if (buildCfg?.test) {
+                            container(buildCfg.test.container) {
+                                sh buildCfg.test.command
+                            }
+                        } else if (legacyTemplate == 'springboot') {
                             container('maven') {
                                 sh "mvn -B test"
                             }
-                        } else if (template == 'react') {
+                        } else if (legacyTemplate == 'react') {
                             container('node') {
                                 sh "npm test -- --watchAll=false --passWithNoTests"
                             }
-                        } else if (template == 'python-api') {
+                        } else if (legacyTemplate == 'python-api') {
                             container('python') {
                                 sh "pytest tests/ -v --tb=short || true"
                             }
@@ -141,7 +166,10 @@ spec:
                 }
                 post {
                     always {
-                        junit allowEmptyResults: true, testResults: '**/surefire-reports/*.xml,**/test-results/*.xml'
+                        script {
+                            def reports = buildCfg?.test?.reports ?: '**/surefire-reports/*.xml,**/test-results/*.xml'
+                            junit allowEmptyResults: true, testResults: reports
+                        }
                     }
                 }
             }
@@ -150,21 +178,26 @@ spec:
                 when { not { branch 'poc/*' } }   // skip on POC branches
                 steps {
                     script {
-                        container('sonar-scanner') {
-                            withSonarQubeEnv('sonarqube') {
-                                if (template == 'springboot') {
-                                    // Maven wrapper handles the scanner
-                                    container('maven') {
-                                        sh "mvn sonar:sonar -Dsonar.projectKey=${env.SERVICE_NAME}"
-                                    }
-                                } else if (template == 'react') {
+                        withSonarQubeEnv('sonarqube') {
+                            if (buildCfg?.sonar) {
+                                container(buildCfg.sonar.container) {
+                                    sh buildCfg.sonar.command
+                                }
+                            } else if (legacyTemplate == 'springboot') {
+                                container('maven') {
+                                    sh "mvn sonar:sonar -Dsonar.projectKey=${env.SERVICE_NAME}"
+                                }
+                            } else if (legacyTemplate == 'react') {
+                                container('sonar-scanner') {
                                     sh """
                                         sonar-scanner \
                                             -Dsonar.projectKey=${env.SERVICE_NAME} \
                                             -Dsonar.sources=src \
                                             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
                                     """
-                                } else if (template == 'python-api') {
+                                }
+                            } else if (legacyTemplate == 'python-api') {
+                                container('sonar-scanner') {
                                     sh """
                                         sonar-scanner \
                                             -Dsonar.projectKey=${env.SERVICE_NAME} \
@@ -256,8 +289,8 @@ spec:
         }
 
         post {
-            success { notifySlack(status: 'success', service: env.SERVICE_NAME, version: env.SERVICE_VERSION) }
-            failure { notifySlack(status: 'failure', service: env.SERVICE_NAME, version: env.SERVICE_VERSION) }
+            success { echo "Build succeeded: ${env.SERVICE_NAME} @ ${env.SERVICE_VERSION}" }
+            failure { echo "Build failed: ${env.SERVICE_NAME} @ ${env.SERVICE_VERSION}" }
         }
     }
 }

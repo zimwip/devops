@@ -36,8 +36,13 @@ jenkins:
         jenkinsUrl: "http://host.k3d.internal:8080"
         jenkinsTunnel: "host.k3d.internal:50000"
         skipTlsVerify: true
-        connectTimeout: 30
-        readTimeout: 30
+        # connectTimeout: initial TCP connect to the k8s API (seconds)
+        # readTimeout: applies to individual HTTP reads; must be long enough for
+        #   the pod informer watch connection to survive without activity.
+        #   30s was too short — the watch would time out and Jenkins would report
+        #   agents as failed to launch even when pods were actually starting.
+        connectTimeout: 60
+        readTimeout: 300
         containerCapStr: "10"
 
 # ── SonarQube server ─────────────────────────────────────────────────────────

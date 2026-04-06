@@ -1,0 +1,21 @@
+# build.yaml — AP3 build configuration for this service.
+# Copied to .platform/build.yaml in the service repo during scaffold.
+# Edit this file in the service repo to customize build behaviour without
+# touching the shared Jenkins library.
+
+version:
+  container: maven
+  command: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout"
+
+build:
+  container: maven
+  command: "mvn -B clean package -DskipTests"
+
+test:
+  container: maven
+  command: "mvn -B test"
+  reports: "**/surefire-reports/*.xml"
+
+sonar:
+  container: maven
+  command: "mvn sonar:sonar -Dsonar.projectKey=${SERVICE_NAME}"
