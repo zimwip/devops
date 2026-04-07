@@ -616,42 +616,49 @@ function CreateServiceModal({ envs, onClose, onCreated }) {
 }
 
 
-function DeployModal({ service, envNames, onClose, onDeployed }) {
-  const [env, setEnv] = useState(envNames[0] || "dev");
+function EnvDeployModal({ env, onClose, onRequested }) {
+  const [services, setServices] = useState([]);
+  const [service, setService] = useState("");
   const [version, setVersion] = useState("");
-  const [platformOverride, setPlatformOverride] = useState("");
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [err, setErr]         = useState("");
   const [confirming, setConfirming] = useState(false);
 
+  useEffect(() => {
+    api.get("/services").then((data) => setServices(Array.isArray(data) ? data : []));
+  }, []);
+
+  const isLatest = version === "latest";
+
   const confirmActions = [
-    `Deploy ${service.name}:${version || "<version>"}`,
-    `Target environment: ${env}`,
-    platformOverride ? `Platform override: ${platformOverride}` : `Platform: auto (from env cluster profile)`,
-    `Update envs/${env}/versions.yaml`,
+    `Request ${service || "<service>"}@${version || "<version>"} for ${env.name}`,
+    `Writes envs/${env.name}/versions.yaml (requested_deployments)`,
+    `Git commit: deploy-request: ${service || "<service>"}@${version || "<version>"} → ${env.name}`,
+    isLatest
+      ? "Jenkins will auto-deploy on next successful build (auto: true)"
+      : "Request is pending — execute manually or via Jenkins",
   ];
 
   const handleSubmit = () => {
-    if (!version) { setErr("Version is required."); return; }
-    setErr("");
-    setConfirming(true);
+    if (!service) { setErr("Select a service."); return; }
+    if (!version) { setErr("Enter a version or 'latest'."); return; }
+    setErr(""); setConfirming(true);
   };
 
   const handleConfirmed = async () => {
     setConfirming(false);
     setLoading(true);
-    const body = { env, service: service.name, version, force: true };
-    if (platformOverride) body.platform = platformOverride;
-    const res = await api.post("/deploy", body);
+    const res = await api.post(`/envs/${encodeURIComponent(env.name)}/deploy-requests`, { service, version });
     setLoading(false);
     if (res.error) { setErr(res.error); return; }
-    onDeployed(); onClose();
+    onRequested();
+    onClose();
   };
 
   if (confirming) {
     return (
       <ConfirmModal
-        title={`Deploy ${service.name} — confirm`}
+        title={`Request deployment — ${env.name}`}
         actions={confirmActions}
         onConfirm={handleConfirmed}
         onCancel={() => setConfirming(false)}
@@ -659,29 +666,36 @@ function DeployModal({ service, envNames, onClose, onDeployed }) {
     );
   }
 
+  const svcOptions = (services || []).map((s) => ({ value: s.name, label: s.name }));
+
   return (
-    <Modal title={`Deploy ${service.name}`} onClose={onClose}>
+    <Modal title={`Request deployment — ${env.name}`} onClose={onClose}>
       <ErrorBox msg={err} />
-      <Field label="Target environment">
-        <Select value={env} onChange={setEnv} options={envNames.map((e) => ({ value: e, label: e }))} />
+      <Field label="Service">
+        <Select value={service} onChange={setService} options={[{ value: "", label: "— select service —" }, ...svcOptions]} />
       </Field>
-      <Field label="Version (semver)"><Input value={version} onChange={setVersion} placeholder="1.9.0" /></Field>
-      <Field
-        label="Platform override (optional)"
-        hint="Leave empty to use the environment's cluster profile."
-      >
-        <Select
-          value={platformOverride}
-          onChange={setPlatformOverride}
-          options={[
-            { value: "",          label: "— auto (from env cluster profile) —" },
-            { value: "openshift", label: "OpenShift" },
-            { value: "aws",       label: "AWS / EKS" },
-          ]}
-        />
+      <Field label="Version" hint="Enter a semver (e.g. 2.4.0) or 'latest' to auto-deploy on next build.">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Input value={version} onChange={setVersion} placeholder="2.4.0" />
+          <button
+            style={{ ...btn(C.teal, true), fontSize: 11, padding: "4px 10px", flexShrink: 0 }}
+            onClick={() => setVersion("latest")}
+          >
+            latest
+          </button>
+        </div>
       </Field>
+      {isLatest && (
+        <div style={{
+          fontSize: 11, color: C.teal, fontFamily: "'IBM Plex Mono', monospace",
+          background: `${C.teal}15`, border: `1px solid ${C.teal}44`,
+          borderRadius: 6, padding: "6px 10px", marginBottom: 4,
+        }}>
+          Auto-deploy: Jenkins will deploy the next successful build to {env.name}
+        </div>
+      )}
       <button style={btn(C.amber)} onClick={handleSubmit} disabled={loading}>
-        {loading ? <Spinner /> : null} Review &amp; deploy
+        {loading ? <Spinner /> : null} Review &amp; request
       </button>
     </Modal>
   );
@@ -1011,7 +1025,6 @@ function ServicesPanel({ envNames }) {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [deploying,        setDeploying]        = useState(null);
   const [removing,         setRemoving]         = useState(null);
   const [expanded,         setExpanded]         = useState(null);
   const [historyOpen,      setHistoryOpen]      = useState({});   // name → bool
@@ -1058,7 +1071,6 @@ function ServicesPanel({ envNames }) {
                     <MonoLabel color={C.text}>{svc.versions?.[env]?.version || "—"}</MonoLabel>
                   </div>
                 ))}
-                <button style={btn(C.amber, true)} onClick={(e) => { e.stopPropagation(); setDeploying(svc); }}>Deploy</button>
               </div>
 
               {expanded === svc.name && (
@@ -1142,7 +1154,6 @@ function ServicesPanel({ envNames }) {
       )}
 
       {showCreate && <CreateServiceModal envs={envNames} onClose={() => setShowCreate(false)} onCreated={load} />}
-      {deploying  && <DeployModal service={deploying} envNames={envNames} onClose={() => setDeploying(null)} onDeployed={load} />}
       {removing   && <RemoveServiceModal service={removing} onClose={() => setRemoving(null)} onRemoved={() => { setRemoving(null); load(); }} />}
     </div>
   );
@@ -1480,21 +1491,74 @@ function EnvPodsModal({ env, onClose }) {
   );
 }
 
-function EnvCard({ env, onDestroy, onDiff, onExtended }) {
+// ── Environment helpers ───────────────────────────────────────────────────────
+
+function envAccentColor(env) {
+  if (env.expiry_status === "expired") return C.coral;
+  if (env.expiry_status === "warning") return C.amber;
+  if (env.type === "poc")              return C.purple;
+  if (env.name === "prod")             return C.coral;
+  if (env.name === "staging")          return C.blue;
+  return C.teal;
+}
+
+// ── Environment sidebar tab item ──────────────────────────────────────────────
+
+function EnvTabItem({ env, selected, onClick }) {
+  const isExpired = env.expiry_status === "expired";
+  const isWarning = env.expiry_status === "warning";
+  const accentColor = envAccentColor(env);
+  const svcCount = Object.keys(env.services || {}).length;
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", flexDirection: "column", gap: 5,
+        padding: "12px 14px", textAlign: "left", width: "100%",
+        background: selected ? C.bg3 : "transparent",
+        border: "none",
+        borderRight: `3px solid ${selected ? accentColor : "transparent"}`,
+        borderBottom: `1px solid ${C.border}`,
+        cursor: "pointer", transition: "background 0.1s",
+      }}
+    >
+      <span style={{
+        fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, fontWeight: 500,
+        color: selected ? C.text : C.muted,
+      }}>
+        {env.name}
+      </span>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+        <Badge type={env.type} />
+        <Badge type={env.platform || "openshift"} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <span style={{ fontSize: 10, color: C.muted }}>{svcCount} svc{svcCount !== 1 ? "s" : ""}</span>
+        {isExpired && <span style={{ ...pill(C.coral), fontSize: 9 }}>expired</span>}
+        {isWarning && !isExpired && <span style={{ ...pill(C.amber), fontSize: 9 }}>{env.days_remaining}d left</span>}
+      </div>
+    </button>
+  );
+}
+
+// ── Environment detail view (upper: env info, lower: services) ────────────────
+
+function EnvDetailView({ env, onDestroy, onDiff, onExtended }) {
   const isPoc = env.type === "poc";
   const isExpired = env.expiry_status === "expired";
   const isWarning = env.expiry_status === "warning";
-  const accentColor = isExpired ? C.coral
-    : isWarning ? C.amber
-    : isPoc ? C.purple
-    : env.name === "prod" ? C.coral
-    : env.name === "staging" ? C.blue
-    : C.teal;
+  const accentColor = envAccentColor(env);
   const svcCount = Object.keys(env.services || {}).length;
 
-  const [liveStatus, setLiveStatus] = useState(null);
+  const [liveStatus,    setLiveStatus]    = useState(null);
   const [statusLoading, setStatusLoading] = useState(false);
-  const [showPods, setShowPods] = useState(false);
+  const [showPods,      setShowPods]      = useState(false);
+  const [showDeploy,    setShowDeploy]    = useState(false);
+
+  const pendingRequests = Object.entries(env.requested_deployments || {})
+    .filter(([, r]) => r.status === "pending")
+    .map(([svc, r]) => ({ service: svc, requested_version: r.requested_version, auto: r.auto }));
 
   const checkStatus = async () => {
     setStatusLoading(true);
@@ -1508,114 +1572,145 @@ function EnvCard({ env, onDestroy, onDiff, onExtended }) {
   const overallDot = liveStatus ? (LIVE_STATUS_DOT[liveStatus.overall] || LIVE_STATUS_DOT.unknown) : null;
 
   return (
-    <div style={{ ...card, borderLeft: `3px solid ${accentColor}`, display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-        <div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500, color: C.text, marginBottom: 6 }}>{env.name}</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <Badge type={env.type} />
-            <Badge type={env.platform || "openshift"} />
-            {env.cluster && env.cluster !== "unknown" && <MonoLabel>{env.cluster}</MonoLabel>}
-            {env.namespace && env.namespace !== "unknown" && (
-              <span style={{ fontSize: 10, color: C.muted, fontFamily: "'IBM Plex Mono', monospace" }}>ns: {env.namespace}</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+      <div style={{ ...card, borderLeft: `3px solid ${accentColor}` }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 14 }}>
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 8 }}>
+              {env.name}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <Badge type={env.type} />
+              <Badge type={env.platform || "openshift"} />
+              {env.cluster && env.cluster !== "unknown" && <MonoLabel>{env.cluster}</MonoLabel>}
+              {env.namespace && env.namespace !== "unknown" && (
+                <span style={{ fontSize: 10, color: C.muted, fontFamily: "'IBM Plex Mono', monospace" }}>ns: {env.namespace}</span>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button style={{ ...btn(C.amber, true), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowDeploy(true)} title="Request a deployment">
+              + Deploy
+            </button>
+            <button style={{ ...btn(C.teal, true), fontSize: 11, padding: "4px 10px" }} onClick={checkStatus} disabled={statusLoading} title="Check live cluster status">
+              {statusLoading ? "…" : liveStatus ? "Refresh" : "Status"}
+            </button>
+            <button style={{ ...btn(C.purple, true), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowPods(true)} title="View live pods">
+              Pods
+            </button>
+            <button style={{ ...btn(C.blue, true), fontSize: 11, padding: "4px 10px" }} onClick={() => onDiff(env.name)}>Diff</button>
+            {isPoc && (
+              <button style={{ ...btn(C.coral, true), fontSize: 11, padding: "4px 10px" }} onClick={() => onDestroy(env.name)}>Destroy</button>
             )}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <button
-            style={{ ...btn(C.teal, true), fontSize: 11, padding: "4px 10px" }}
-            onClick={checkStatus}
-            disabled={statusLoading}
-            title="Check live cluster status"
-          >
-            {statusLoading ? "…" : liveStatus ? "Refresh" : "Status"}
-          </button>
-          <button
-            style={{ ...btn(C.purple, true), fontSize: 11, padding: "4px 10px" }}
-            onClick={() => setShowPods(true)}
-            title="View live pods for this environment"
-          >
-            Pods
-          </button>
-          <button style={{ ...btn(C.blue, true), fontSize: 11, padding: "4px 10px" }} onClick={() => onDiff(env.name)}>Diff</button>
-          {isPoc && (
-            <button style={{ ...btn(C.coral, true), fontSize: 11, padding: "4px 10px" }} onClick={() => onDestroy(env.name)}>Destroy</button>
+
+        {isPoc && <ExpiryBanner env={env} onExtended={onExtended} />}
+
+        {env.description && (
+          <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic", marginTop: 8 }}>{env.description}</div>
+        )}
+
+        {liveStatus && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderRadius: 6,
+            background: `${overallDot.color}15`, border: `1px solid ${overallDot.color}44`,
+            fontSize: 11, color: overallDot.color, fontFamily: "'IBM Plex Mono', monospace",
+            marginTop: 12,
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: overallDot.color, flexShrink: 0 }} />
+            {liveStatus.reachable ? overallDot.label : `UNREACHABLE — ${liveStatus.error || ""}`}
+            <span style={{ marginLeft: "auto", color: C.muted, fontSize: 10 }}>{liveStatus.checked_at?.slice(11, 19)} UTC</span>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 16, fontSize: 11, color: C.muted, flexWrap: "wrap", marginTop: 12 }}>
+          {env.updated_at && <span>Updated: {env.updated_at.slice(0, 10)}</span>}
+          {env.owner && <span>Owner: {env.owner}</span>}
+          {isPoc && env.expires_at && !isExpired && !isWarning && (
+            <span>Expires: {env.expires_at.slice(0, 10)}</span>
           )}
         </div>
-      </div>
 
-      {/* Expiry warning banner */}
-      {isPoc && <ExpiryBanner env={env} onExtended={onExtended} />}
-
-      {/* Description */}
-      {env.description && <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>{env.description}</div>}
-
-      {/* Live status overall banner */}
-      {liveStatus && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderRadius: 6,
-          background: `${overallDot.color}15`, border: `1px solid ${overallDot.color}44`,
-          fontSize: 11, color: overallDot.color, fontFamily: "'IBM Plex Mono', monospace",
-        }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: overallDot.color, flexShrink: 0 }} />
-          {liveStatus.reachable
-            ? overallDot.label
-            : `UNREACHABLE — ${liveStatus.error || ""}`}
-          <span style={{ marginLeft: "auto", color: C.muted, fontSize: 10 }}>
-            {liveStatus.checked_at?.slice(11, 19)} UTC
-          </span>
-        </div>
-      )}
-
-      {/* Services chips */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {Object.entries(env.services || {}).slice(0, 6).map(([svc, d]) => {
-          const live = svcLive[svc];
-          const dot = live ? (LIVE_STATUS_DOT[live.status] || LIVE_STATUS_DOT.unknown) : null;
-          const hasDrift = live?.running_version && live.running_version !== d.version;
-          return (
-            <div
-              key={svc}
-              style={{
-                background: C.bg3,
-                border: `1px solid ${dot ? dot.color + "55" : C.border}`,
-                borderRadius: 6, padding: "4px 10px",
-                display: "flex", gap: 8, alignItems: "center",
-              }}
-              title={live?.message || undefined}
-            >
-              {dot && <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot.color, flexShrink: 0 }} />}
-              <span style={{ fontSize: 12, color: C.text }}>{svc}</span>
-              <MonoLabel color={accentColor}>{d.version}</MonoLabel>
-              {hasDrift && <MonoLabel color={C.coral}>live:{live.running_version}</MonoLabel>}
-            </div>
-          );
-        })}
-        {svcCount > 6 && <span style={{ fontSize: 12, color: C.muted, padding: "4px 10px" }}>+{svcCount - 6} more</span>}
-        {svcCount === 0 && <span style={{ fontSize: 12, color: C.muted }}>No services deployed</span>}
-      </div>
-
-      {/* Footer meta */}
-      <div style={{ display: "flex", gap: 16, fontSize: 11, color: C.muted, flexWrap: "wrap" }}>
-        {env.updated_at && <span>Updated: {env.updated_at.slice(0, 10)}</span>}
-        {isPoc && env.expires_at && !isExpired && !isWarning && (
-          <span>Expires: {env.expires_at.slice(0, 10)}</span>
+        {pendingRequests.length > 0 && (
+          <div style={{
+            fontSize: 11, color: C.amber, fontFamily: "'IBM Plex Mono', monospace",
+            background: `${C.amber}12`, border: `1px solid ${C.amber}44`,
+            borderRadius: 6, padding: "5px 10px", marginTop: 10,
+          }}>
+            {pendingRequests.length} pending request{pendingRequests.length > 1 ? "s" : ""}:
+            {pendingRequests.map((r) => (
+              <span key={r.service} style={{ marginLeft: 6 }}>
+                {r.service}@{r.requested_version}{r.auto ? " (auto)" : ""}
+              </span>
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Live pods modal */}
-      {showPods && <EnvPodsModal env={env} onClose={() => setShowPods(false)} />}
+      <div style={{ ...card }}>
+        <div style={{
+          fontSize: 11, color: C.blue, fontFamily: "'IBM Plex Mono', monospace",
+          textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 14,
+        }}>
+          Deployed services — {svcCount}
+        </div>
+        {svcCount === 0 ? (
+          <div style={{ fontSize: 13, color: C.muted }}>No services deployed in this environment.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+            {Object.entries(env.services || {}).map(([svc, d]) => {
+              const live = svcLive[svc];
+              const dot  = live ? (LIVE_STATUS_DOT[live.status] || LIVE_STATUS_DOT.unknown) : null;
+              const hasDrift = live?.running_version && live.running_version !== d.version;
+              return (
+                <div
+                  key={svc}
+                  style={{
+                    background: C.bg3,
+                    border: `1px solid ${dot ? dot.color + "55" : C.border}`,
+                    borderRadius: 8, padding: "12px 14px",
+                  }}
+                  title={live?.message || undefined}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    {dot && <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot.color, flexShrink: 0 }} />}
+                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{svc}</span>
+                  </div>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: accentColor, marginBottom: 4 }}>{d.version}</div>
+                  {hasDrift && (
+                    <div style={{ fontSize: 10, color: C.coral, fontFamily: "'IBM Plex Mono', monospace" }}>live: {live.running_version}</div>
+                  )}
+                  {d.deployed_at && <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>{d.deployed_at.slice(0, 10)}</div>}
+                  <div style={{ marginTop: 6 }}><Badge type={d.health || "unknown"} /></div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {showPods   && <EnvPodsModal env={env} onClose={() => setShowPods(false)} />}
+      {showDeploy && (
+        <EnvDeployModal
+          env={env}
+          onClose={() => setShowDeploy(false)}
+          onRequested={onExtended}
+        />
+      )}
     </div>
   );
 }
 
 function EnvsPanel() {
-  const [envs,       setEnvs]       = useState([]);
-  const [clusters,   setClusters]   = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [diffTarget, setDiffTarget] = useState(null);
+  const [envs,            setEnvs]            = useState([]);
+  const [clusters,        setClusters]        = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [showCreate,      setShowCreate]      = useState(false);
+  const [diffTarget,      setDiffTarget]      = useState(null);
+  const [selectedEnvName, setSelectedEnvName] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1630,18 +1725,24 @@ function EnvsPanel() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-select first env after load; keep selection if it still exists
+  useEffect(() => {
+    if (envs.length === 0) return;
+    const stillExists = envs.some((e) => e.name === selectedEnvName);
+    if (!stillExists) setSelectedEnvName(envs[0].name);
+  }, [envs]); // eslint-disable-line
+
   const destroy = async (name) => {
     if (!confirm(`Destroy environment '${name}'?`)) return;
     await api.del(`/envs/${name}`);
+    setSelectedEnvName(null);
     load();
   };
 
   const expiredCount = envs.filter((e) => e.expiry_status === "expired").length;
   const warningCount = envs.filter((e) => e.expiry_status === "warning").length;
-
-  const envNames = envs.map((e) => e.name);
-  const fixed    = envs.filter((e) => e.type === "fixed");
-  const pocs     = envs.filter((e) => e.type === "poc");
+  const envNames     = envs.map((e) => e.name);
+  const selectedEnv  = envs.find((e) => e.name === selectedEnvName) || null;
 
   return (
     <div>
@@ -1651,14 +1752,10 @@ function EnvsPanel() {
           <span>
             Environments
             {expiredCount > 0 && (
-              <span style={{ ...pill(C.coral), fontSize: 11, marginLeft: 10 }}>
-                {expiredCount} expired
-              </span>
+              <span style={{ ...pill(C.coral), fontSize: 11, marginLeft: 10 }}>{expiredCount} expired</span>
             )}
             {warningCount > 0 && expiredCount === 0 && (
-              <span style={{ ...pill(C.amber), fontSize: 11, marginLeft: 10 }}>
-                {warningCount} expiring soon
-              </span>
+              <span style={{ ...pill(C.amber), fontSize: 11, marginLeft: 10 }}>{warningCount} expiring soon</span>
             )}
           </span>
         }
@@ -1666,23 +1763,47 @@ function EnvsPanel() {
       />
 
       {loading ? (
-        <div style={{ display: "flex", gap: 10, alignItems: "center", color: C.muted, padding: 16 }}><Spinner /> Loading environments…</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", color: C.muted, padding: 16 }}>
+          <Spinner /> Loading environments…
+        </div>
       ) : (
-        <>
-          <div style={{ fontSize: 12, color: C.muted, marginBottom: 10, fontFamily: "'IBM Plex Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em" }}>Fixed</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: 12, marginBottom: 28 }}>
-            {fixed.map((e) => <EnvCard key={e.name} env={e} onDestroy={destroy} onDiff={setDiffTarget} onExtended={load} />)}
+        <div style={{ display: "flex", gap: 0, alignItems: "flex-start" }}>
+
+          {/* ── Left vertical tabs ── */}
+          <div style={{
+            width: 200, flexShrink: 0, marginRight: 20,
+            borderRight: `1px solid ${C.border}`,
+            display: "flex", flexDirection: "column",
+            maxHeight: "calc(100vh - 160px)", overflowY: "auto",
+          }}>
+            {envs.map((env) => (
+              <EnvTabItem
+                key={env.name}
+                env={env}
+                selected={selectedEnv?.name === env.name}
+                onClick={() => setSelectedEnvName(env.name)}
+              />
+            ))}
           </div>
 
-          {pocs.length > 0 && (
-            <>
-              <div style={{ fontSize: 12, color: C.muted, marginBottom: 10, fontFamily: "'IBM Plex Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em" }}>POC / Ephemeral</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: 12 }}>
-                {pocs.map((e) => <EnvCard key={e.name} env={e} onDestroy={destroy} onDiff={setDiffTarget} onExtended={load} />)}
-            </div>
-            </>
-          )}
-        </>
+          {/* ── Main detail area ── */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {selectedEnv ? (
+              <EnvDetailView
+                key={selectedEnv.name}
+                env={selectedEnv}
+                onDestroy={destroy}
+                onDiff={setDiffTarget}
+                onExtended={load}
+              />
+            ) : (
+              <div style={{ color: C.muted, padding: 32, textAlign: "center", fontSize: 13 }}>
+                Select an environment
+              </div>
+            )}
+          </div>
+
+        </div>
       )}
 
       {showCreate && (
@@ -2474,7 +2595,7 @@ function ClusterLivePanel() {
 // ── App shell ─────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [tab,      setTab]      = useState("services");
+  const [tab,      setTab]      = useState("envs");
   const [envNames, setEnvNames] = useState([]);
 
   useEffect(() => {

@@ -486,24 +486,22 @@ fi
 
 if [[ "${GITEA_TOKEN:-__PENDING__}" == "__PENDING__" ]]; then
     # Register admin via web form — first user Gitea auto-promotes to admin.
-    # We avoid the gitea CLI because it writes to a different SQLite path than
-    # the running server inside the container.
     info "Registering Gitea admin user 'ap3admin' via web form …"
 
     # Fetch signup page to get the CSRF token
-    GITEA_CSRF=$(curl -sc /tmp/ap3_gitea_jar \
+    GITEA_CSRF=$(curl -sc /tmp/gitea_jar \
         --max-time 10 "http://localhost:3000/user/sign_up" 2>/dev/null \
         | grep -oP 'name="_csrf"\s+value="\K[^"]+' | head -1)
 
     if [[ -z "$GITEA_CSRF" ]]; then
         # Fallback: try meta tag format
-        GITEA_CSRF=$(curl -sc /tmp/ap3_gitea_jar \
+        GITEA_CSRF=$(curl -sc /tmp/gitea_jar \
             --max-time 10 "http://localhost:3000/user/sign_up" 2>/dev/null \
             | grep -oP 'content="\K[^"]+(?="[^>]*name="_csrf")' | head -1)
     fi
 
     if [[ -n "$GITEA_CSRF" ]]; then
-        SIGNUP_STATUS=$(curl -sb /tmp/ap3_gitea_jar -c /tmp/ap3_gitea_jar \
+        SIGNUP_STATUS=$(curl -sb /tmp/gitea_jar -c /tmp/gitea_jar \
             -s --max-time 10 -o /dev/null -w "%{http_code}" \
             -X POST "http://localhost:3000/user/sign_up" \
             --data-urlencode "_csrf=$GITEA_CSRF" \
@@ -622,52 +620,66 @@ fi
 source "$ENV_FILE"
 
 # ─── Gitea → k3d DNS registration ────────────────────────────────────────────
-# k3d pods use CoreDNS which has no knowledge of Docker/Podman compose service
-# names. Connect Gitea to the k3d network and inject its IP into the CoreDNS
-# NodeHosts file so that 'gitea' resolves inside every agent pod.
+# Gitea joins k3d-ap3 via docker-compose.yml. Register a headless
+# Service+Endpoints in jenkins-builds so agent pods resolve 'gitea' via kube-dns.
 
 step "Gitea k3d DNS"
 
-docker network connect "k3d-${CLUSTER_NAME}" ap3-gitea 2>/dev/null && \
-    ok "Gitea connected to k3d-${CLUSTER_NAME}" || \
-    ok "Gitea already on k3d-${CLUSTER_NAME} network"
-
-# Extract Gitea's IP on the k3d network by inspecting the network JSON directly.
-# docker network inspect returns a Containers map keyed by container ID;
-# we use python3 to find the entry whose Name matches ap3-gitea.
-GITEA_K3D_IP=$(docker network inspect "k3d-${CLUSTER_NAME}" 2>/dev/null \
-    | python3 -c "
+# Gitea joins k3d-ap3 via docker-compose.yml networks — no manual connect needed.
+# Use container inspect (not network inspect — Podman's network inspect omits
+# the Containers section).  Try user docker first, then sudo (system Podman).
+_gitea_ip() {
+    local json
+    json=$(docker inspect gitea 2>/dev/null)
+    [[ -z "$json" || "$json" == "[]" ]] && json=$(sudo docker inspect gitea 2>/dev/null)
+    echo "$json" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-containers = data[0].get('Containers', {}) if data else {}
-for c in containers.values():
-    if c.get('Name') == 'ap3-gitea':
-        print(c.get('IPv4Address','').split('/')[0])
-        break
-" 2>/dev/null || true)
+c = data[0] if data else {}
+nets = c.get('NetworkSettings', {}).get('Networks', {})
+for name, info in nets.items():
+    if 'k3d' in name:
+        ip = info.get('IPAddress', '')
+        if ip: print(ip); break
+" 2>/dev/null
+}
+GITEA_K3D_IP=$(_gitea_ip || true)
 
 if [[ -z "$GITEA_K3D_IP" ]]; then
-    warn "Could not determine Gitea IP on k3d-${CLUSTER_NAME} — CoreDNS patch skipped."
-    warn "k3d pods may not resolve 'gitea'. Re-run: bash testenv/create.sh (idempotent)."
-else
-    ok "Gitea IP on k3d-${CLUSTER_NAME}: ${GITEA_K3D_IP}"
-
-    # k3s CoreDNS serves the NodeHosts ConfigMap key as /etc/coredns/NodeHosts.
-    # Adding 'gitea' there makes it resolve for all pods without restarting CoreDNS
-    # (the hosts plugin reloads on a 15s interval by default).
-    CURRENT_NODEHOSTS=$(kubectl -n kube-system get configmap coredns \
-        -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "")
-
-    if echo "$CURRENT_NODEHOSTS" | grep -q " gitea$"; then
-        ok "CoreDNS already has entry for gitea"
-    else
-        NEW_NODEHOSTS="${CURRENT_NODEHOSTS}
-${GITEA_K3D_IP} gitea"
-        kubectl -n kube-system patch configmap coredns --type=merge \
-            -p "{\"data\":{\"NodeHosts\":$(echo "$NEW_NODEHOSTS" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}}"
-        ok "CoreDNS patched: gitea → ${GITEA_K3D_IP}"
-    fi
+    die "Could not determine Gitea IP on k3d-${CLUSTER_NAME}. Check: sudo docker inspect gitea"
 fi
+
+ok "Gitea IP on k3d-${CLUSTER_NAME}: ${GITEA_K3D_IP}"
+
+# Register a headless Service + Endpoints in the jenkins-builds namespace so
+# that agent pods resolve 'gitea' immediately via kube-dns — no ConfigMap
+# file-sync latency, no CoreDNS restart needed. kubectl apply is idempotent.
+kubectl apply -n "${BUILDS_NS}" -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea
+spec:
+  clusterIP: None
+  ports:
+  - name: http
+    port: 3000
+    protocol: TCP
+    targetPort: 3000
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: gitea
+subsets:
+- addresses:
+  - ip: ${GITEA_K3D_IP}
+  ports:
+  - name: http
+    port: 3000
+    protocol: TCP
+EOF
+ok "gitea Service+Endpoints registered in ${BUILDS_NS}: gitea → ${GITEA_K3D_IP}"
 
 # ─── Phase 2: Jenkins ─────────────────────────────────────────────────────────
 

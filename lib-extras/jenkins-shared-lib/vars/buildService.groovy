@@ -248,6 +248,45 @@ spec:
                 }
             }
 
+            stage('Scan deploy requests') {
+                steps {
+                    script {
+                        // Clone the platform-config repo to scan for auto deployment requests.
+                        // PLATFORM_CONFIG_REPO must be set as a Jenkins global environment variable.
+                        def platformRepo = env.PLATFORM_CONFIG_REPO
+                        if (!platformRepo) {
+                            echo "PLATFORM_CONFIG_REPO not set — skipping deploy request scan"
+                            return
+                        }
+                        dir('_platform_config') {
+                            git url: platformRepo, credentialsId: 'github-token', shallow: true
+                        }
+                        def envsDir = '_platform_config/envs'
+                        def versionFiles = sh(
+                            script: "find '${envsDir}' -maxdepth 2 -name versions.yaml",
+                            returnStdout: true
+                        ).trim().split('\n').findAll { it }
+                        for (versionsFile in versionFiles) {
+                            def envName = versionsFile.tokenize('/')[-2]
+                            def versions = readYaml(file: versionsFile)
+                            def requests = versions?.requested_deployments ?: [:]
+                            def svcRequest = requests[env.SERVICE_NAME]
+                            if (svcRequest && svcRequest.status == 'pending' && svcRequest.auto == true) {
+                                echo "Auto-deploying ${env.SERVICE_NAME}:${env.SERVICE_VERSION} to ${envName} (auto request)"
+                                sh """
+                                    python3 /opt/platform/scripts/platform_cli.py \
+                                        deploy execute \
+                                        --env ${envName} \
+                                        --service ${env.SERVICE_NAME} \
+                                        --version ${env.SERVICE_VERSION} \
+                                        --force
+                                """
+                            }
+                        }
+                    }
+                }
+            }
+
             stage('Deploy DEV') {
                 when { branch 'develop' }
                 steps {

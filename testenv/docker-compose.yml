@@ -69,7 +69,7 @@ services:
   #   create repos, push CODEOWNERS, set branch protection.
   gitea:
     image: gitea/gitea:1.22
-    container_name: ap3-gitea
+    container_name: gitea
     environment:
       GITEA__database__DB_TYPE: sqlite3
       GITEA__server__ROOT_URL: "http://localhost:3000/"
@@ -83,6 +83,12 @@ services:
       - "2222:22"
     volumes:
       - gitea_data:/data
+    # Join the k3d network so agent pods can reach Gitea via a headless
+    # Service+Endpoints registered by create.sh / start.sh.  The k3d-ap3
+    # network is created by k3d before docker compose up is called.
+    networks:
+      - default
+      - k3d-ap3
     restart: unless-stopped
 
   # ── Jenkins LTS ──────────────────────────────────────────────────────────────
@@ -121,8 +127,9 @@ services:
       GITHUB_TOKEN: "${GITHUB_TOKEN:-placeholder-set-in-env}"
       # Docker-internal hostname — used by JCasC (giteaServers, globalLibraries).
       # Must NOT be localhost:3000 (that resolves to Jenkins itself inside the container).
-      # k3d pods resolve 'gitea' via CoreDNS patched in create.sh (Gitea is connected
-      # to the k3d-ap3 network and its IP is added to the CoreDNS NodeHosts entry).
+      # k3d pods resolve 'gitea' via a headless Service+Endpoints in jenkins-builds
+      # created by create.sh / refreshed by start.sh (Gitea is connected to k3d-ap3
+      # and its IP is registered in the Endpoints object so kube-dns resolves it).
       GITEA_URL: "http://gitea:3000"
       GITEA_ORG: "${GITEA_ORG:-ap3}"
       SHARED_LIB_REPO_NAME: "${SHARED_LIB_REPO_NAME:-jenkins-shared-lib}"

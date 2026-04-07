@@ -226,6 +226,8 @@ class PlatformConfig:
         # Normalize: bare `services:` key parses as None in PyYAML
         if data.get("services") is None:
             data["services"] = {}
+        if data.get("requested_deployments") is None:
+            data["requested_deployments"] = {}
         return data
 
     def save_versions(self, env_name: str, data: dict):

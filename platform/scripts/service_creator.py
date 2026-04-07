@@ -213,10 +213,7 @@ class ServiceCreator:
             steps.append({"step": "jenkins_pipeline", "status": "skipped",
                           "reason": "--no-jenkins"})
 
-        # ── Register in dev env + service catalog ─────────────────────────
-        self._register_in_dev_env(name)
-        steps.append({"step": "register_in_dev_env", "status": "ok"})
-
+        # ── Register in service catalog ───────────────────────────────────
         self._register_in_service_catalog(
             name, owner, description, source_mode, template, repo_url, ap3_hosted
         )
@@ -252,10 +249,9 @@ class ServiceCreator:
                 print()
                 for w in warnings:
                     print(f"  !  {w}")
-            sep = chr(92) if IS_WINDOWS else "/"
             print()
-            print(f"  Next step: python scripts{sep}platform_cli.py deploy "
-                  f"--env dev --service {name} --version 0.1.0")
+            print(f"  Deployments are pull-based: push to the 'develop' branch")
+            print(f"  and Jenkins will deploy {name} to dev automatically.")
 
         return result
 
@@ -778,26 +774,6 @@ class ServiceCreator:
             ["git", "checkout", "main"],
         ]:
             run(cmd, cwd=target, check=True, capture_output=True)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # DEV ENV REGISTRATION
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _register_in_dev_env(self, name: str):
-        step(f"Registering '{name}' in dev environment")
-        if self.dry_run:
-            return
-        try:
-            data = self.cfg.load_versions("dev")
-        except FileNotFoundError:
-            data = {"_meta": {}, "services": {}}
-        data.setdefault("services", {})[name] = {
-            "version":     "0.1.0-SNAPSHOT",
-            "image":       f"{self.cfg.registry}/{name}:0.1.0-SNAPSHOT",
-            "deployed_at": None,
-            "health":      "pending",
-        }
-        self.cfg.save_versions("dev", data)
 
     def _register_in_service_catalog(
         self,

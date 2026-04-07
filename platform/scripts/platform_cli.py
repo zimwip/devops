@@ -160,10 +160,15 @@ def build_parser() -> argparse.ArgumentParser:
     edi.add_argument("--to",   dest="env_to",   required=True)
 
     # ── DEPLOY ───────────────────────────────────────────────────────────────
-    dep = sub.add_parser("deploy", help="Trigger a deployment")
+    dep = sub.add_parser("deploy", help="Trigger a deployment or manage deployment requests")
+    dep.add_argument("action", nargs="?", default="deploy",
+                     choices=["deploy", "request", "cancel", "execute"],
+                     help="Sub-action: deploy (default), request, cancel, execute")
     dep.add_argument("--env",     required=True, help="Target environment")
     dep.add_argument("--service", required=True, help="Service name")
-    dep.add_argument("--version", required=True, help="Version to deploy (semver)")
+    dep.add_argument("--version", default=None,
+                     help="Version to deploy/request (semver or 'latest'). "
+                          "Required for deploy, request, and execute actions.")
     dep.add_argument("--wait",    action="store_true",
                      help="Wait for rollout to complete")
     dep.add_argument("--platform", choices=["openshift", "aws"], default=None,
@@ -374,13 +379,42 @@ def main():
 
         elif args.resource == "deploy":
             handler = Deployer(cfg, dry_run=args.dry_run, json_output=args.json)
-            handler.deploy(
-                env=args.env,
-                service=args.service,
-                version=args.version,
-                wait=args.wait,
-                force=args.force,
-            )
+            sub_action = getattr(args, "action", "deploy")
+            if sub_action == "request":
+                if not args.version:
+                    parser.error("deploy request requires --version")
+                handler.request_deploy(
+                    env=args.env,
+                    service=args.service,
+                    version=args.version,
+                    force=args.force,
+                )
+            elif sub_action == "cancel":
+                handler.cancel_deploy_request(
+                    env=args.env,
+                    service=args.service,
+                    force=args.force,
+                )
+            elif sub_action == "execute":
+                if not args.version:
+                    parser.error("deploy execute requires --version")
+                handler.execute_deploy_request(
+                    env=args.env,
+                    service=args.service,
+                    version=args.version,
+                    force=args.force,
+                    wait=args.wait,
+                )
+            else:
+                if not args.version:
+                    parser.error("deploy requires --version")
+                handler.deploy(
+                    env=args.env,
+                    service=args.service,
+                    version=args.version,
+                    wait=args.wait,
+                    force=args.force,
+                )
 
         elif args.resource == "release-notes":
             handler = ReleaseNotesGenerator(cfg, json_output=args.json)

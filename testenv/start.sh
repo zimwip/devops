@@ -15,6 +15,7 @@ CLUSTER_NAME="ap3"
 
 info()  { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
 ok()    { echo -e "\033[1;32m[ OK ]\033[0m  $*"; }
+warn()  { echo -e "\033[1;33m[WARN]\033[0m  $*"; }
 die()   { echo -e "\033[1;31m[ERR ]\033[0m  $*" >&2; exit 1; }
 
 dc() {
@@ -64,6 +65,69 @@ fi
 # ── Compose services ─────────────────────────────────────────────────────────
 info "Starting compose services …"
 dc up -d
+
+# ── Re-register Gitea DNS in k3d ─────────────────────────────────────────────
+# Gitea joins k3d-ap3 via docker-compose.yml; its IP changes on every restart.
+# Update the headless Service+Endpoints in jenkins-builds so agent pods
+# resolve http://gitea:3000 immediately via kube-dns.
+info "Updating Gitea DNS (Service+Endpoints in ${BUILDS_NS:-jenkins-builds}) …"
+
+# Gitea joins k3d-ap3 via docker-compose.yml networks — no manual connect needed.
+# Use container inspect (not network inspect — Podman's network inspect omits
+# the Containers section).  Try user docker first, then sudo (system Podman).
+_gitea_ip() {
+    local json
+    json=$(docker inspect gitea 2>/dev/null)
+    [[ -z "$json" || "$json" == "[]" ]] && json=$(sudo docker inspect gitea 2>/dev/null)
+    echo "$json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+c = data[0] if data else {}
+nets = c.get('NetworkSettings', {}).get('Networks', {})
+for name, info in nets.items():
+    if 'k3d' in name:
+        ip = info.get('IPAddress', '')
+        if ip: print(ip); break
+" 2>/dev/null
+}
+GITEA_K3D_IP=$(_gitea_ip || true)
+
+BUILDS_NS="jenkins-builds"
+
+if [[ -z "$GITEA_K3D_IP" ]]; then
+    warn "GITEA DNS NOT UPDATED — builds will fail to clone from gitea."
+    warn "Fix: sudo docker inspect gitea | grep -A5 k3d — check gitea is on k3d-ap3 network"
+    exit 1
+fi
+
+# Update the headless Service+Endpoints so agent pods immediately resolve
+# the fresh container IP via kube-dns (no ConfigMap file-sync latency).
+kubectl apply -n "${BUILDS_NS}" -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea
+spec:
+  clusterIP: None
+  ports:
+  - name: http
+    port: 3000
+    protocol: TCP
+    targetPort: 3000
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: gitea
+subsets:
+- addresses:
+  - ip: ${GITEA_K3D_IP}
+  ports:
+  - name: http
+    port: 3000
+    protocol: TCP
+EOF
+ok "gitea Service+Endpoints updated in ${BUILDS_NS}: gitea → ${GITEA_K3D_IP}"
 
 ok "All services starting. Check status with:"
 echo "   docker compose -f testenv/docker-compose.yml ps"

@@ -119,6 +119,7 @@ class EnvSummary(BaseModel):
     expires_at: str | None = None
     updated_at: str | None = None
     services: dict[str, ServiceVersionDetail] = {}
+    requested_deployments: dict[str, dict] = {}
     error: str | None = None
     # Expiry status — only populated for POC environments
     expiry_status: str | None = None   # "ok" | "warning" | "expired" | None
@@ -264,6 +265,31 @@ class DeployResponse(BaseModel):
     env: str
     service: str
     version: str
+
+
+class DeployRequestV2(BaseModel):
+    service: str = Field(..., description="Service name", json_schema_extra={"example": "service-auth"})
+    version: str = Field(..., description="Semver version or 'latest'", json_schema_extra={"example": "latest"})
+
+
+class DeployRequestV2Response(BaseModel):
+    status: str
+    env: str
+    service: str
+    requested_version: str
+    auto: bool
+    requested_at: str
+
+
+class DeployRequestStatus(BaseModel):
+    service: str
+    requested_version: str
+    requested_at: str
+    requested_by: str
+    auto: bool
+    status: str
+    fulfilled_version: str | None = None
+    fulfilled_at: str | None = None
 
 
 class TemplateInfo(BaseModel):
@@ -555,6 +581,7 @@ def _build_env_summary(env_name: str) -> EnvSummary:
         expires_at=meta.get("expires_at"),
         updated_at=meta.get("updated_at"),
         services=services,
+        requested_deployments=data.get("requested_deployments") or {},
         expiry_status=expiry.get("status"),
         days_remaining=expiry.get("days_remaining"),
     )
@@ -1593,6 +1620,84 @@ def deploy(body: DeployRequest):
     _run_cli(*args)
     return DeployResponse(status="triggered", env=body.env,
                           service=body.service, version=body.version)
+
+
+# ── Deployment requests (GitOps pull model) ───────────────────────────────────
+
+@app.post("/api/envs/{env_name}/deploy-requests",
+          response_model=DeployRequestV2Response,
+          tags=["Deployments"],
+          summary="Request a service deployment for an environment")
+def create_deploy_request(env_name: str, body: DeployRequestV2):
+    """
+    Declare a desired deployment in versions.yaml (GitOps pull model).
+
+    - Stores the request under `requested_deployments` in envs/{env}/versions.yaml.
+    - When version is 'latest', Jenkins will auto-execute on the next successful build.
+    - For specific versions, use POST /api/envs/{env}/deploy-requests/{service}/execute
+      or wait for an operator to execute it via the CLI.
+    """
+    if env_name not in cfg.list_envs():
+        raise HTTPException(status_code=404, detail=f"Environment '{env_name}' not found")
+    _run_cli(
+        "deploy", "request",
+        "--env",     env_name,
+        "--service", body.service,
+        "--version", body.version,
+        "--force",
+    )
+    # Re-read to get the recorded timestamp
+    data = cfg.load_versions(env_name)
+    req = data.get("requested_deployments", {}).get(body.service, {})
+    return DeployRequestV2Response(
+        status="requested",
+        env=env_name,
+        service=body.service,
+        requested_version=req.get("requested_version", body.version),
+        auto=req.get("auto", body.version == "latest"),
+        requested_at=req.get("requested_at", ""),
+    )
+
+
+@app.get("/api/envs/{env_name}/deploy-requests",
+         response_model=list[DeployRequestStatus],
+         tags=["Deployments"],
+         summary="List deployment requests for an environment")
+def list_deploy_requests(env_name: str):
+    """Return all deployment requests (pending, fulfilled, cancelled) for this environment."""
+    if env_name not in cfg.list_envs():
+        raise HTTPException(status_code=404, detail=f"Environment '{env_name}' not found")
+    data = cfg.load_versions(env_name)
+    requests = data.get("requested_deployments") or {}
+    return [
+        DeployRequestStatus(
+            service=svc,
+            requested_version=r.get("requested_version", ""),
+            requested_at=r.get("requested_at", ""),
+            requested_by=r.get("requested_by", ""),
+            auto=r.get("auto", False),
+            status=r.get("status", "pending"),
+            fulfilled_version=r.get("fulfilled_version"),
+            fulfilled_at=r.get("fulfilled_at"),
+        )
+        for svc, r in requests.items()
+    ]
+
+
+@app.delete("/api/envs/{env_name}/deploy-requests/{service}",
+            tags=["Deployments"],
+            summary="Cancel a pending deployment request")
+def cancel_deploy_request(env_name: str, service: str):
+    """Remove a pending deployment request from versions.yaml."""
+    if env_name not in cfg.list_envs():
+        raise HTTPException(status_code=404, detail=f"Environment '{env_name}' not found")
+    _run_cli(
+        "deploy", "cancel",
+        "--env",     env_name,
+        "--service", service,
+        "--force",
+    )
+    return {"status": "cancelled", "env": env_name, "service": service}
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────
