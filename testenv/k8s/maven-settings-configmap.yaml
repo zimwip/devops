@@ -1,0 +1,32 @@
+---
+# maven-settings-configmap.yaml
+# Mounts /root/.m2/settings.xml into build pods so Maven routes all
+# dependency lookups through the local Nexus instance.
+# Applied by create.sh; the content mirrors testenv/jenkins/maven-settings.xml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maven-settings
+  namespace: jenkins-builds
+data:
+  settings.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0
+                                  https://maven.apache.org/xsd/settings-1.2.0.xsd">
+      <servers>
+        <server>
+          <id>nexus</id>
+          <username>admin</username>
+          <password>${env.NEXUS_PASSWORD}</password>
+        </server>
+      </servers>
+      <mirrors>
+        <mirror>
+          <id>nexus-mirror</id>
+          <mirrorOf>*</mirrorOf>
+          <url>http://host.k3d.internal:8081/repository/maven-public/</url>
+        </mirror>
+      </mirrors>
+    </settings>

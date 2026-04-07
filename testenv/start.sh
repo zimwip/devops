@@ -129,9 +129,20 @@ subsets:
 EOF
 ok "gitea Service+Endpoints updated in ${BUILDS_NS}: gitea → ${GITEA_K3D_IP}"
 
+# ── Re-apply k8s resources that may be lost after cluster recreate ─────────────
+info "Refreshing k8s ConfigMaps / Secrets …"
+kubectl apply -f "$SCRIPT_DIR/k8s/maven-settings-configmap.yaml" 2>/dev/null || true
+if [[ -n "${NEXUS_PASSWORD:-}" ]]; then
+    kubectl create secret generic nexus-credentials \
+        --namespace jenkins-builds \
+        --from-literal=password="${NEXUS_PASSWORD}" \
+        --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || true
+fi
+
 ok "All services starting. Check status with:"
 echo "   docker compose -f testenv/docker-compose.yml ps"
 echo "   kubectl cluster-info"
 echo
 echo "   Jenkins:   http://localhost:8080  (${JENKINS_ADMIN_USER:-admin} / ${JENKINS_ADMIN_PASSWORD:-see .env})"
 echo "   SonarQube: http://localhost:9000  (admin / ${SONAR_ADMIN_PASSWORD:-see .env})"
+echo "   Nexus:     http://localhost:8081  (admin / ${NEXUS_PASSWORD:-see .env})"

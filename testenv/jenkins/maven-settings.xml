@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  maven-settings.xml — mounted into Jenkins build pods at /root/.m2/settings.xml
+  via the maven-settings ConfigMap in the jenkins-builds namespace.
+
+  Routes all Maven traffic through the local Nexus instance:
+  - maven-public group: proxies Maven Central + hosts internal artifacts
+  - maven-internal hosted: com.myorg:* artifacts published by create.sh
+
+  Build pods reach Nexus via host.k3d.internal:8081 — k3d injects this
+  hostname (→ host machine IP) into every pod's /etc/hosts.
+
+  NEXUS_PASSWORD is set in the Jenkins container environment (from .env).
+  GITHUB_TOKEN_USR / GITHUB_TOKEN_PSW come from credentials('github-token').
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0
+                              https://maven.apache.org/xsd/settings-1.2.0.xsd">
+
+  <servers>
+    <server>
+      <id>nexus</id>
+      <username>admin</username>
+      <password>${env.NEXUS_PASSWORD}</password>
+    </server>
+  </servers>
+
+  <mirrors>
+    <!--
+      Route all external repo lookups through Nexus so builds work offline
+      and Maven Central traffic is cached locally.
+    -->
+    <mirror>
+      <id>nexus-mirror</id>
+      <mirrorOf>*</mirrorOf>
+      <url>http://host.k3d.internal:8081/repository/maven-public/</url>
+    </mirror>
+  </mirrors>
+
+</settings>

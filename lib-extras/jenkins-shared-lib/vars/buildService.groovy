@@ -18,6 +18,10 @@ def call(Map config = [:]) {
 apiVersion: v1
 kind: Pod
 spec:
+  volumes:
+  - name: maven-settings
+    configMap:
+      name: maven-settings
   containers:
   - name: maven
     image: maven:3.9-eclipse-temurin-17
@@ -25,6 +29,16 @@ spec:
     resources:
       requests: {cpu: 500m, memory: 1Gi}
       limits:   {cpu: 2,    memory: 2Gi}
+    env:
+    - name: NEXUS_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: nexus-credentials
+          key: password
+    volumeMounts:
+    - name: maven-settings
+      mountPath: /root/.m2/settings.xml
+      subPath: settings.xml
   - name: node
     image: node:20-alpine
     command: [sleep, infinity]

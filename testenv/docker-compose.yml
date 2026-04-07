@@ -5,8 +5,8 @@
 # every pod's /etc/hosts), so no shared network with k3d is needed.
 #
 # Start order (managed by create.sh):
-#   Phase 1 — dc up -d postgres sonarqube registry gitea
-#   Phase 2 — dc up -d jenkins   (after SonarQube token + k3d SA token)
+#   Phase 1 — dc up -d postgres sonarqube registry gitea nexus
+#   Phase 2 — dc up -d jenkins   (after SonarQube token + Nexus config + k3d SA token)
 
 services:
 
@@ -64,6 +64,24 @@ services:
       - registry_data:/var/lib/registry
     restart: unless-stopped
 
+  # ── Nexus OSS — Maven artifact repository (simulates Artifactory) ──────────
+  # Hosts internal com.myorg:* artifacts and proxies Maven Central so build
+  # pods resolve all dependencies through a single internal endpoint.
+  # Initial admin password is at /nexus-data/admin.password (first boot only).
+  nexus:
+    image: sonatype/nexus3:3.76.0
+    ports:
+      - "8081:8081"
+    volumes:
+      - nexus_data:/nexus-data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/service/rest/v1/status | grep -q '\"edition\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+
   # ── Gitea — local GitHub replacement ─────────────────────────────────────────
   # GitHub-compatible REST API (v1) — platform CLI uses it like GitHub:
   #   create repos, push CODEOWNERS, set branch protection.
@@ -103,6 +121,7 @@ services:
       - sonarqube
       - registry
       - gitea
+      - nexus
     # Make the host machine reachable from inside the Jenkins container.
     # This is required so the Kubernetes plugin can reach the k3d API at
     # host.containers.internal:6550 (K8S_API_URL).
@@ -125,6 +144,9 @@ services:
       K8S_API_URL: "${K8S_API_URL}"
       K8S_SA_TOKEN: "${K8S_SA_TOKEN}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-placeholder-set-in-env}"
+      # Nexus password injected into build pods via nexus-credentials Secret.
+      # Also used by Jenkins controller for any direct Nexus API calls.
+      NEXUS_PASSWORD: "${NEXUS_PASSWORD:-}"
       # Docker-internal hostname — used by JCasC (giteaServers, globalLibraries).
       # Must NOT be localhost:3000 (that resolves to Jenkins itself inside the container).
       # k3d pods resolve 'gitea' via a headless Service+Endpoints in jenkins-builds
@@ -159,4 +181,5 @@ volumes:
   sonarqube_logs:
   registry_data:
   gitea_data:
+  nexus_data:
   jenkins_data:

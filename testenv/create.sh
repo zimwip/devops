@@ -351,6 +351,7 @@ cat > "$ENV_FILE" <<ENVEOF
 #   set -a && source testenv/.env && set +a
 
 SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-__PENDING__}
+NEXUS_PASSWORD=${NEXUS_PASSWORD:-__PENDING__}
 JENKINS_USER=${JENKINS_ADMIN_USER:-admin}
 JENKINS_TOKEN=${JENKINS_TOKEN:-__PENDING__}
 GITEA_TOKEN=${GITEA_TOKEN:-__PENDING__}
@@ -448,11 +449,11 @@ ok "k3d API (via k3d network): $K8S_API_URL"
 
 source "$ENV_FILE"
 
-# ─── Phase 1: Gitea + SonarQube + Registry ────────────────────────────────────
+# ─── Phase 1: Gitea + SonarQube + Registry + Nexus ───────────────────────────
 
-step "Gitea + SonarQube + Registry"
+step "Gitea + SonarQube + Registry + Nexus"
 
-dc up -d postgres sonarqube registry gitea
+dc up -d postgres sonarqube registry gitea nexus
 
 # ── Gitea ─────────────────────────────────────────────────────────────────────
 
@@ -618,6 +619,124 @@ if [[ "${SONARQUBE_TOKEN:-__PENDING__}" == "__PENDING__" ]]; then
 fi
 
 source "$ENV_FILE"
+
+# ─── Nexus ────────────────────────────────────────────────────────────────────
+# Configure Nexus OSS: change admin password, create maven-internal hosted repo
+# and maven-public group (proxy for Maven Central + internal).
+# Then build lib-platform and deploy it so service builds resolve com.myorg:*.
+
+step "Nexus"
+
+wait_http "http://localhost:8081/service/rest/v1/status" "Nexus HTTP" 120 5
+info "Waiting for Nexus to finish initialising …"
+for _i in $(seq 1 30); do
+    if curl -sf --max-time 5 "http://localhost:8081/service/rest/v1/status" \
+            | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('edition') else 1)" \
+            2>/dev/null; then
+        ok "Nexus: ready"; break
+    fi
+    printf "."; sleep 5
+done
+
+# Read first-boot admin password (written by Nexus on first startup)
+NEXUS_INITIAL_PASSWORD=""
+# Try both rootful and rootless Docker to handle Podman dual-context setups
+NEXUS_CID=$(docker ps -qf name=nexus 2>/dev/null || sudo docker ps -qf name=nexus 2>/dev/null || true)
+if [[ -n "$NEXUS_CID" ]]; then
+    NEXUS_INITIAL_PASSWORD=$(docker exec "$NEXUS_CID" cat /nexus-data/admin.password 2>/dev/null \
+        || sudo docker exec "$NEXUS_CID" cat /nexus-data/admin.password 2>/dev/null || true)
+fi
+
+if [[ -z "${NEXUS_PASSWORD:-}" || "${NEXUS_PASSWORD}" == "__PENDING__" ]]; then
+    # Generate a new admin password and set it via the API
+    NEXUS_PASSWORD=$(python3 -c "import secrets,string; print(secrets.token_hex(12))")
+    update_env "NEXUS_PASSWORD" "$NEXUS_PASSWORD"
+    update_users "NEXUS_PASSWORD" "$NEXUS_PASSWORD"
+
+    if [[ -n "$NEXUS_INITIAL_PASSWORD" ]]; then
+        HTTP=$(curl -sf --max-time 10 -o /dev/null -w "%{http_code}" \
+            -u "admin:${NEXUS_INITIAL_PASSWORD}" -X PUT \
+            "http://localhost:8081/service/rest/v1/security/users/admin/change-password" \
+            -H "Content-Type: text/plain" \
+            -d "${NEXUS_PASSWORD}" 2>/dev/null || echo "000")
+        [[ "$HTTP" == "204" ]] && ok "Nexus admin password set" || warn "Nexus password change returned HTTP $HTTP (may be already set)"
+    else
+        warn "Could not read Nexus initial password — admin.password file missing. Nexus may already be configured."
+        NEXUS_PASSWORD=$(grep "^NEXUS_PASSWORD=" "$ENV_FILE" | cut -d= -f2 || true)
+    fi
+fi
+
+source "$ENV_FILE"
+
+# Create maven-internal hosted repo (idempotent: 400 = already exists)
+HTTP=$(curl -sf --max-time 10 -o /dev/null -w "%{http_code}" \
+    -u "admin:${NEXUS_PASSWORD}" -X POST \
+    "http://localhost:8081/service/rest/v1/repositories/maven/hosted" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "maven-internal",
+      "online": true,
+      "storage": {"blobStoreName": "default", "strictContentTypeValidation": true, "writePolicy": "allow"},
+      "maven": {"versionPolicy": "MIXED", "layoutPolicy": "STRICT"}
+    }' 2>/dev/null || echo "000")
+[[ "$HTTP" == "201" ]] && ok "Nexus: maven-internal repo created" || ok "Nexus: maven-internal repo already exists (HTTP $HTTP)"
+
+# Create maven-public group: Central proxy + maven-internal
+HTTP=$(curl -sf --max-time 10 -o /dev/null -w "%{http_code}" \
+    -u "admin:${NEXUS_PASSWORD}" -X POST \
+    "http://localhost:8081/service/rest/v1/repositories/maven/group" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "maven-public",
+      "online": true,
+      "storage": {"blobStoreName": "default", "strictContentTypeValidation": true},
+      "group": {"memberNames": ["maven-releases", "maven-snapshots", "maven-central", "maven-internal"]},
+      "maven": {"versionPolicy": "MIXED", "layoutPolicy": "PERMISSIVE"}
+    }' 2>/dev/null || echo "000")
+[[ "$HTTP" == "201" ]] && ok "Nexus: maven-public group created" || ok "Nexus: maven-public group already exists (HTTP $HTTP)"
+
+# Deploy lib-platform to Nexus so service builds can resolve com.myorg:lib-platform
+LIB_PLATFORM_DIR="$SCRIPT_DIR/../lib-extras/lib-platform"
+info "Building and deploying lib-platform → Nexus …"
+NEXUS_SETTINGS=$(mktemp /tmp/nexus-settings-XXXXXX.xml)
+cat > "$NEXUS_SETTINGS" <<SETTINGSEOF
+<settings>
+  <servers>
+    <server>
+      <id>nexus</id>
+      <username>admin</username>
+      <password>${NEXUS_PASSWORD}</password>
+    </server>
+  </servers>
+</settings>
+SETTINGSEOF
+
+# Run mvn deploy inside a Maven container on the testenv_default network so
+# localhost:8081 is reachable.  sudo is needed because testenv containers run
+# under the system (root) Podman on this host.
+sudo docker run --rm \
+    --network testenv_default \
+    -v "${LIB_PLATFORM_DIR}:/workspace:z" \
+    -v "${NEXUS_SETTINGS}:/root/.m2/settings.xml:z" \
+    -w /workspace \
+    maven:3.9-eclipse-temurin-17 \
+    mvn -B -q deploy \
+        -DaltDeploymentRepository="nexus::default::http://nexus:8081/repository/maven-internal/" \
+        -s /root/.m2/settings.xml
+
+rm -f "$NEXUS_SETTINGS"
+ok "lib-platform 1.3.0 deployed to Nexus"
+
+# Apply maven-settings ConfigMap so build pods can find Nexus
+kubectl apply -f "$SCRIPT_DIR/k8s/maven-settings-configmap.yaml"
+ok "maven-settings ConfigMap applied to jenkins-builds"
+
+# Create nexus-credentials Secret so build pods can authenticate to Nexus
+kubectl create secret generic nexus-credentials \
+    --namespace jenkins-builds \
+    --from-literal=password="${NEXUS_PASSWORD}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+ok "nexus-credentials secret applied to jenkins-builds"
 
 # ─── Gitea → k3d DNS registration ────────────────────────────────────────────
 # Gitea joins k3d-ap3 via docker-compose.yml. Register a headless
