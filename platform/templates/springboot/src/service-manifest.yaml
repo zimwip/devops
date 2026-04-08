@@ -3,7 +3,7 @@
 # Jenkins validates these constraints before every deployment.
 
 name: "{{SERVICE_NAME}}"
-version: "0.1.0-SNAPSHOT"   # kept in sync with pom.xml by Maven
+version: "0.1.0"   # kept in sync with version.txt — both must be X.Y.Z
 
 # Minimum versions of other services required at runtime.
 # Use semver ranges: ">=2.2.0", "~1.9.0", "^3.0.0"

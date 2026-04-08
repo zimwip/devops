@@ -4,7 +4,7 @@ replicaCount: 1
 
 image:
   repository: registry.internal/{{SERVICE_NAME}}
-  tag: "0.1.0-SNAPSHOT"
+  tag: "0.1.0"
   pullPolicy: IfNotPresent
 
 service:

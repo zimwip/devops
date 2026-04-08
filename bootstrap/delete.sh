@@ -2,27 +2,31 @@
 # bootstrap/delete.sh — Remove an AP3 platform instance from all tooling
 #
 # Reverses what bootstrap.sh did:
-#   - Deletes GitHub/Gitea repos (platform, jenkins-shared-lib, extra libraries)
+#   - Deletes ALL repos in the GitHub/Gitea org (platform, jenkins-shared-lib,
+#     libraries, and any service repos created with 'svc create')
 #   - Removes Jenkins pipeline jobs for all registered services
 #   - Removes Jenkins global shared library configuration
 #   - Deletes SonarQube projects for all registered services
 #   - Removes the local platform instance directory
+#   - Resets platform/envs/, platform/services/ and platform/platform.yaml
+#     in the toolkit to their template state and commits 'chore: platform reset'
 #
 # Usage:
-#   ./bootstrap/delete.sh                          # uses .bootstrap-state.yaml
-#   ./bootstrap/delete.sh --config <yaml>          # uses config file
-#   ./bootstrap/delete.sh --keep-repos             # skip GitHub/Gitea deletion
-#   ./bootstrap/delete.sh --keep-jenkins           # skip Jenkins job deletion
-#   ./bootstrap/delete.sh --keep-jenkins-lib       # skip Jenkins lib config removal
-#   ./bootstrap/delete.sh --keep-sonar             # skip SonarQube deletion
-#   ./bootstrap/delete.sh --keep-local             # skip local directory removal
-#   ./bootstrap/delete.sh --yes                    # skip confirmation prompts
+#   ./bootstrap/delete.sh                            # uses .bootstrap-state.yaml
+#   ./bootstrap/delete.sh --config <yaml>            # uses config file
+#   ./bootstrap/delete.sh --keep-repos               # skip GitHub/Gitea deletion
+#   ./bootstrap/delete.sh --keep-jenkins             # skip Jenkins job deletion
+#   ./bootstrap/delete.sh --keep-jenkins-lib         # skip Jenkins lib config removal
+#   ./bootstrap/delete.sh --keep-sonar               # skip SonarQube deletion
+#   ./bootstrap/delete.sh --keep-local               # skip local directory removal
+#   ./bootstrap/delete.sh --keep-platform-state      # skip toolkit state reset
+#   ./bootstrap/delete.sh --yes                      # skip confirmation prompts
 #
 # Required environment variables (for the operations you don't skip):
 #   GITHUB_TOKEN       GitHub/Gitea API token
 #   JENKINS_USER       Jenkins username
 #   JENKINS_TOKEN      Jenkins API token
-#   SONARQUBE_TOKEN    SonarQube user token (for --keep-sonar if not skipped)
+#   SONARQUBE_TOKEN    SonarQube user token (skipped if not set)
 
 set -euo pipefail
 

@@ -22,6 +22,8 @@ spec:
   - name: maven-settings
     configMap:
       name: maven-settings
+  - name: platform-scripts
+    emptyDir: {}
   containers:
   - name: maven
     image: maven:3.9-eclipse-temurin-17
@@ -30,33 +32,44 @@ spec:
       requests: {cpu: 500m, memory: 1Gi}
       limits:   {cpu: 2,    memory: 2Gi}
     env:
-    - name: NEXUS_PASSWORD
+    - name: ARTIFACTORY_PASSWORD
       valueFrom:
         secretKeyRef:
-          name: nexus-credentials
+          name: artifactory-credentials
           key: password
     volumeMounts:
     - name: maven-settings
       mountPath: /root/.m2/settings.xml
       subPath: settings.xml
+    - name: platform-scripts
+      mountPath: /opt/platform
   - name: node
     image: node:20-alpine
     command: [sleep, infinity]
     resources:
       requests: {cpu: 300m, memory: 512Mi}
       limits:   {cpu: 1,    memory: 1Gi}
+    volumeMounts:
+    - name: platform-scripts
+      mountPath: /opt/platform
   - name: python
     image: python:3.12-slim
     command: [sleep, infinity]
     resources:
       requests: {cpu: 300m, memory: 512Mi}
       limits:   {cpu: 1,    memory: 1Gi}
+    volumeMounts:
+    - name: platform-scripts
+      mountPath: /opt/platform
   - name: sonar-scanner
     image: sonarsource/sonar-scanner-cli:latest
     command: [sleep, infinity]
     resources:
       requests: {cpu: 300m, memory: 512Mi}
       limits:   {cpu: 1,    memory: 1Gi}
+    volumeMounts:
+    - name: platform-scripts
+      mountPath: /opt/platform
   - name: docker
     image: docker:24-dind
     securityContext:
@@ -64,6 +77,9 @@ spec:
     resources:
       requests: {cpu: 300m, memory: 512Mi}
       limits:   {cpu: 2,    memory: 2Gi}
+    volumeMounts:
+    - name: platform-scripts
+      mountPath: /opt/platform
 """
 
     pipeline {
@@ -84,11 +100,85 @@ spec:
             SERVICE_NAME  = "${env.JOB_NAME.split('/')[0]}"
             REGISTRY      = credentials('registry-url')
             GITHUB_TOKEN  = credentials('github-token')
+            // Artifactory/Helm credentials are resolved lazily in the stages that
+            // need them (Helm package & push, Release Promotion) to avoid failing
+            // the pipeline on services that haven't configured these credentials yet.
         }
 
         stages {
 
+            stage('Setup') {
+                steps {
+                    script {
+                        // Trust the workspace directory regardless of which UID owns it.
+                        // git 2.35.2+ rejects repos owned by a different user by default;
+                        // in Jenkins Kubernetes pods the workspace volume is mounted as root
+                        // while the jnlp agent may run as jenkins (uid 1000).
+                        sh "git config --global --add safe.directory '*'"
+
+                        // Clone the platform repo so downstream stages can call
+                        // /opt/platform/scripts/platform_cli.py and validate_version.py.
+                        // PLATFORM_CONFIG_REPO must be set as a Jenkins global env var
+                        // (e.g. http://gitea:3000/ap3/platform-repo.git).
+                        def platformRepo = env.PLATFORM_CONFIG_REPO
+                        if (platformRepo) {
+                            sh """
+                                if [ ! -d /opt/platform/.git ]; then
+                                    git clone --depth 1 ${platformRepo} /opt/platform
+                                fi
+                            """
+                        } else {
+                            echo "PLATFORM_CONFIG_REPO not set — platform scripts unavailable"
+                        }
+                    }
+                }
+            }
+
+            stage('Validate Version') {
+                steps {
+                    // Git commands run in the default jnlp container (always has git).
+                    // The python container (python:3.12-slim) does not include git.
+                    script {
+                        env.GIT_TAG = sh(
+                            script: "git tag --points-at HEAD 2>/dev/null | head -1 || true",
+                            returnStdout: true
+                        ).trim()
+                        env.GIT_SHA = sh(
+                            script: "git rev-parse --short HEAD",
+                            returnStdout: true
+                        ).trim()
+                    }
+                    container('python') {
+                        script {
+                            if (fileExists('version.txt')) {
+                                // New path: version.txt is the single source of truth.
+                                // validate_version.py validates coherence AND computes the final tag.
+                                def validatorPath = '/opt/platform/scripts/validate_version.py'
+                                env.SERVICE_VERSION = sh(
+                                    script: """
+                                        python3 ${validatorPath} \
+                                            --branch "${env.BRANCH_NAME}" \
+                                            --tag "${env.GIT_TAG}" \
+                                            --build-number "${env.BUILD_NUMBER}" \
+                                            --sha "${env.GIT_SHA}"
+                                    """,
+                                    returnStdout: true
+                                ).trim()
+                                echo "Version (from version.txt): ${env.SERVICE_VERSION}"
+                            } else {
+                                // Legacy path: version extracted in the Version stage below.
+                                echo "No version.txt found — falling back to legacy version extraction"
+                            }
+                        }
+                    }
+                }
+            }
+
             stage('Version') {
+                when {
+                    // Skip when version.txt already resolved the version
+                    expression { !env.SERVICE_VERSION }
+                }
                 steps {
                     script {
                         // Load build config if present (new template structure)
@@ -96,16 +186,17 @@ spec:
                             buildCfg = readYaml(file: '.platform/build.yaml')
                         }
 
+                        def rawVersion = ''
                         if (buildCfg?.version) {
                             container(buildCfg.version.container) {
-                                env.SERVICE_VERSION = sh(
+                                rawVersion = sh(
                                     script: buildCfg.version.command,
                                     returnStdout: true
                                 ).trim()
                             }
                         } else if (legacyTemplate == 'springboot') {
                             container('maven') {
-                                env.SERVICE_VERSION = sh(
+                                rawVersion = sh(
                                     script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout",
                                     returnStdout: true
                                 ).trim()
@@ -113,19 +204,30 @@ spec:
                         } else if (legacyTemplate == 'react') {
                             container('node') {
                                 def pkg = readJSON file: 'package.json'
-                                env.SERVICE_VERSION = pkg.version
+                                rawVersion = pkg.version
                             }
                         } else if (legacyTemplate == 'python-api') {
                             container('python') {
-                                env.SERVICE_VERSION = sh(
+                                rawVersion = sh(
                                     script: "python -c \"import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])\" 2>/dev/null || grep -m1 '^version' setup.cfg | cut -d= -f2 | tr -d ' '",
                                     returnStdout: true
                                 ).trim()
                             }
                         }
-                        // Strip -SNAPSHOT for release branches
-                        if (env.BRANCH_NAME ==~ /release\/.*|main/) {
-                            env.SERVICE_VERSION = env.SERVICE_VERSION.replace('-SNAPSHOT', '')
+
+                        // Compute versioned tag from raw version + branch context
+                        rawVersion = rawVersion.replace('-SNAPSHOT', '')
+                        if (env.BRANCH_NAME == 'develop') {
+                            env.SERVICE_VERSION = "${rawVersion}-SNAPSHOT-${env.GIT_SHA}"
+                        } else if (env.BRANCH_NAME ==~ /release\/.*/) {
+                            env.SERVICE_VERSION = "${rawVersion}-rc.${env.BUILD_NUMBER}"
+                        } else if (env.BRANCH_NAME == 'main') {
+                            env.SERVICE_VERSION = rawVersion
+                        } else if (env.BRANCH_NAME ==~ /poc\/.*/) {
+                            def pocName = env.BRANCH_NAME.replace('poc/', '')
+                            env.SERVICE_VERSION = "poc-${pocName}"
+                        } else {
+                            env.SERVICE_VERSION = rawVersion
                         }
                         echo "Building ${env.SERVICE_NAME} @ ${env.SERVICE_VERSION}"
                     }
@@ -243,7 +345,14 @@ spec:
                     container('docker') {
                         script {
                             def tag = "${env.REGISTRY}/${env.SERVICE_NAME}:${env.SERVICE_VERSION}"
-                            sh "docker build -t ${tag} ."
+                            def buildDate = sh(script: "date -u +%Y-%m-%dT%H:%M:%SZ", returnStdout: true).trim()
+                            sh """
+                                docker build -t ${tag} \
+                                    --build-arg APP_VERSION=${env.SERVICE_VERSION} \
+                                    --build-arg GIT_COMMIT=${env.GIT_SHA} \
+                                    --build-arg BUILD_DATE=${buildDate} \
+                                    .
+                            """
                             sh "docker push ${tag}"
                             env.IMAGE_TAG = tag
                         }
@@ -251,14 +360,119 @@ spec:
                 }
             }
 
-            stage('Helm package') {
+            stage('Helm package & push') {
+                environment {
+                    HELM_REGISTRY     = credentials('helm-registry-url')
+                    ARTIFACTORY_CREDS = credentials('artifactory-credentials')
+                }
                 steps {
-                    sh """
-                        helm package helm/ \
-                            --version ${env.SERVICE_VERSION} \
-                            --app-version ${env.SERVICE_VERSION} \
-                            --destination target/
-                    """
+                    container('docker') {
+                        script {
+                            sh """
+                                helm package helm/ \
+                                    --version ${env.SERVICE_VERSION} \
+                                    --app-version ${env.SERVICE_VERSION} \
+                                    --destination target/
+                            """
+                            // Push Helm chart to Artifactory OCI registry
+                            sh """
+                                echo "${env.ARTIFACTORY_CREDS_PSW}" | \
+                                    helm registry login ${env.HELM_REGISTRY} \
+                                        --username "${env.ARTIFACTORY_CREDS_USR}" \
+                                        --password-stdin
+                                helm push target/${env.SERVICE_NAME}-${env.SERVICE_VERSION}.tgz \
+                                    oci://${env.HELM_REGISTRY}/helm-local
+                            """
+                        }
+                    }
+                }
+            }
+
+            stage('Release Promotion') {
+                // Only on main branch: retag the SNAPSHOT image and Helm chart
+                // to the release version in Artifactory — no rebuild, bit-for-bit identical.
+                when { branch 'main' }
+                environment {
+                    ARTIFACTORY_URL   = credentials('artifactory-url')
+                    ARTIFACTORY_CREDS = credentials('artifactory-credentials')
+                    HELM_REGISTRY     = credentials('helm-registry-url')
+                }
+                steps {
+                    container('python') {
+                        script {
+                            // Resolve the snapshot tag from the last release/* commit.
+                            // The release branch was already built as X.Y.Z-rc.N; the final
+                            // SNAPSHOT that was tested is X.Y.Z-SNAPSHOT-<sha> on develop.
+                            // Convention: the release/* branch build produced rc tags, and
+                            // the main merge carries the same version in version.txt.
+                            // We promote by retagging in Artifactory via REST API.
+                            def snapshotPattern = "${env.SERVICE_VERSION}-SNAPSHOT-"
+                            sh """
+                                python3 - <<'EOF'
+import os, sys, requests
+
+artifactory_url = os.environ['ARTIFACTORY_URL']
+creds = (os.environ['ARTIFACTORY_CREDS_USR'], os.environ['ARTIFACTORY_CREDS_PSW'])
+service = os.environ['SERVICE_NAME']
+release_version = os.environ['SERVICE_VERSION']
+snapshot_pattern = release_version + '-SNAPSHOT-'
+
+# Find the latest snapshot image for this service in docker-local
+search_url = f"{artifactory_url}/artifactory/api/search/artifact"
+resp = requests.get(search_url, params={
+    'name': service,
+    'repos': 'docker-local',
+}, auth=creds)
+resp.raise_for_status()
+results = resp.json().get('results', [])
+
+# Find the snapshot tag matching our release version prefix
+snapshot_tag = None
+for r in results:
+    uri = r.get('uri', '')
+    if snapshot_pattern in uri:
+        # Extract the tag from the path: docker-local/service/tag/manifest.json
+        parts = uri.rstrip('/manifest.json').split('/')
+        candidate_tag = parts[-1] if parts else None
+        if candidate_tag and candidate_tag.startswith(snapshot_pattern):
+            snapshot_tag = candidate_tag
+            break
+
+if not snapshot_tag:
+    print(f"WARNING: No snapshot found matching '{snapshot_pattern}*' in docker-local.")
+    print("This can happen on the first release. Skipping promotion — Docker build was used directly.")
+    sys.exit(0)
+
+print(f"Promoting {service}:{snapshot_tag} → {service}:{release_version}")
+
+# Promote Docker image: retag snapshot → release (copy, not move)
+promote_url = f"{artifactory_url}/artifactory/api/docker/docker-local/v2/promote"
+payload = {
+    'targetRepo':         'docker-release',
+    'dockerRepository':   service,
+    'tag':                snapshot_tag,
+    'targetTag':          release_version,
+    'copy':               True,
+}
+resp = requests.post(promote_url, json=payload, auth=creds)
+if resp.status_code not in (200, 201):
+    print(f"WARNING: Docker promotion returned {resp.status_code}: {resp.text}", file=sys.stderr)
+    sys.exit(1)
+print(f"Docker image promoted: {service}:{release_version} in docker-release")
+
+# Copy Helm chart from helm-local (snapshot) to helm-release
+helm_src  = f"helm-local/{service}-{snapshot_tag}.tgz"
+helm_dst  = f"helm-release/{service}-{release_version}.tgz"
+copy_url  = f"{artifactory_url}/artifactory/api/copy/{helm_src}?to=/{helm_dst}&failFast=0"
+resp = requests.post(copy_url, auth=creds)
+if resp.status_code not in (200, 201):
+    print(f"WARNING: Helm chart copy returned {resp.status_code}: {resp.text}", file=sys.stderr)
+    sys.exit(1)
+print(f"Helm chart promoted: {service}-{release_version}.tgz in helm-release")
+EOF
+                            """
+                        }
+                    }
                 }
             }
 

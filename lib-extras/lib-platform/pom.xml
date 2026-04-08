@@ -11,7 +11,7 @@
   <name>Platform Library</name>
   <description>
     Cross-cutting platform library: security, logging, tracing, pub/sub stubs.
-    Published to the local Nexus instance during testenv bootstrap so that
+    Published to the local Artifactory instance during testenv bootstrap so that
     service builds can resolve com.myorg:lib-platform without a real Artifactory.
   </description>
 
@@ -23,14 +23,14 @@
   </properties>
 
   <!--
-    Deployment target: Nexus hosted repository 'maven-internal'.
-    create.sh calls: mvn deploy -s <settings> -DaltDeploymentRepository=...
-    URL uses localhost so it works from the host during bootstrap.
+    Deployment target: Artifactory local repository 'maven-internal'.
+    create.sh calls mvn deploy from inside a container on the testenv_default
+    network, so 'artifactory' resolves via Docker DNS to port 8082.
   -->
   <distributionManagement>
     <repository>
-      <id>nexus</id>
-      <url>http://localhost:8081/repository/maven-internal/</url>
+      <id>artifactory</id>
+      <url>http://artifactory:8082/artifactory/maven-internal/</url>
     </repository>
   </distributionManagement>
 

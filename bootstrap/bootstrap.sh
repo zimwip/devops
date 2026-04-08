@@ -146,7 +146,21 @@ fi
 if git remote get-url origin &>/dev/null 2>&1; then
     step "Pushing to origin"
     PUSH_URL="$(git remote get-url origin)"
-    if git push -u origin main; then
+    PUSH_OK=false
+    if git push -u origin main 2>/dev/null; then
+        PUSH_OK=true
+    else
+        # Remote may have a stale commit (previous bootstrap run, or Gitea default
+        # branch init).  Force-push is safe here: this repo belongs to this
+        # bootstrap instance and the local content is authoritative.
+        warn "Normal push rejected — remote has diverged history (stale bootstrap?)."
+        warn "Force-pushing local content to origin..."
+        if git push --force -u origin main; then
+            PUSH_OK=true
+        fi
+    fi
+
+    if $PUSH_OK; then
         success "Pushed to ${PUSH_URL}"
 
         # ── Re-clone for a clean working copy ─────────────────────────────────
@@ -177,7 +191,7 @@ print(urlunparse(u._replace(netloc=netloc)))
         fi
     else
         warn "git push failed — local commit created successfully."
-        warn "Push manually: cd ${TARGET_DIR} && git push -u origin main"
+        warn "Push manually: cd ${TARGET_DIR} && git push --force -u origin main"
     fi
 fi
 

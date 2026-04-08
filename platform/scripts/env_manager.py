@@ -1,4 +1,17 @@
-"""env_manager.py — Create, destroy and inspect platform environments."""
+"""env_manager.py — Create, destroy and inspect platform environments.
+
+All environments — dev, staging, prod, and POC — are managed uniformly.
+Each environment directory contains:
+
+  envs/{env}/
+  ├── envs.yaml               ← environment manifest (type: standard | poc)
+  └── {service}/
+      ├── version.yaml        ← deployed version state for this service
+      └── values.yaml         ← Helm values override (optional)
+
+Standard environments have type: standard.
+POC environments have type: poc with TTL fields; the same operations apply.
+"""
 
 import copy
 import json
@@ -26,19 +39,18 @@ class EnvManager:
     def list_envs(self):
         envs = self._load_all_envs()
         if self.json_output:
-            # Enrich with expiry status
             for e in envs:
-                e["_expiry"] = self._expiry_status(e)
+                e["_expiry"] = self._expiry_status(e["manifest"])
             print(json.dumps(envs, indent=2))
             return
         col_w = [36, 10, 12, 10, 18, 22]
         header = ["Environment", "Type", "Platform", "Cluster", "Owner", "Expires / status"]
         rows = []
         for e in envs:
-            m = e.get("_meta", {})
-            env_type = m.get("env_type", "fixed")
+            m = e["manifest"]
+            env_type = m.get("type", "standard")
             if env_type == "poc":
-                expiry = self._expiry_status(e)
+                expiry = self._expiry_status(m)
                 if expiry["status"] == "expired":
                     expires_label = f"EXPIRED ({expiry['days_overdue']}d ago) !!"
                 elif expiry["status"] == "warning":
@@ -47,11 +59,13 @@ class EnvManager:
                     expires_label = f"{m.get('expires_at','')[:10]} ({expiry.get('days_remaining','?')}d)"
             else:
                 expires_label = "permanent"
+            cluster = m.get("cluster", self.cfg.default_cluster_dev)
+            profile = self.cfg.get_cluster_profile(cluster)
             rows.append([
                 e["name"],
                 env_type,
-                m.get("platform", "openshift"),
-                m.get("cluster", "—")[:10],
+                profile.platform,
+                cluster[:10],
                 m.get("owner", m.get("updated_by", "—"))[:18],
                 expires_label[:22],
             ])
@@ -59,43 +73,59 @@ class EnvManager:
 
     def info(self, name: str):
         try:
-            data = self.cfg.load_versions(name)
+            manifest = self.cfg.load_env_manifest(name)
         except FileNotFoundError:
             error_exit(f"Environment '{name}' not found.")
+
+        services = self._load_services(name)
+
         if self.json_output:
-            # Inject expiry_status into JSON output
-            data_out = {"name": name, **data}
-            data_out["_expiry"] = self._expiry_status(data)
+            data_out = {
+                "name": name,
+                "manifest": manifest,
+                "services": services,
+                "_expiry": self._expiry_status(manifest),
+            }
             print(json.dumps(data_out, indent=2))
             return
-        m = data.get("_meta", {})
+
+        env_type = manifest.get("type", "standard")
+        cluster  = manifest.get("cluster", self.cfg.default_cluster_dev)
+        profile  = self.cfg.get_cluster_profile(cluster)
+
         print(f"\n  Environment : {name}")
-        print(f"  Type        : {m.get('env_type', 'fixed')}")
-        print(f"  Platform    : {m.get('platform', 'openshift')}")
-        print(f"  Cluster     : {m.get('cluster', '—')}")
-        ns = m.get("namespace", "—")
-        ns_src = " (provided externally)" if m.get("namespace_provided") else " (auto-generated)"
-        print(f"  Namespace   : {ns}{ns_src}")
-        if m.get("env_type") == "poc":
-            print(f"  Owner       : {m.get('owner', '—')}")
-            print(f"  Description : {m.get('description', '—')}")
-            print(f"  Base env    : {m.get('base_env', '—')}")
-            # Expiry warning
-            expiry = self._expiry_status(data)
-            expires_str = m.get('expires_at', '—')
+        print(f"  Type        : {env_type}")
+        print(f"  Platform    : {profile.platform}")
+        print(f"  Cluster     : {cluster}")
+        ns_pattern = manifest.get("namespace_pattern", f"{name}-{{service}}")
+        print(f"  NS pattern  : {ns_pattern}")
+
+        if env_type == "poc":
+            print(f"  Owner       : {manifest.get('owner', '—')}")
+            print(f"  Description : {manifest.get('description', '—')}")
+            print(f"  Base env    : {manifest.get('base_env', '—')}")
+            if manifest.get("contact_slack"):
+                print(f"  Slack       : {manifest.get('contact_slack')}")
+            expiry = self._expiry_status(manifest)
+            expires_str = manifest.get("expires_at", "—")
             if expiry["status"] == "expired":
                 print(f"  Expires     : {expires_str[:10]}  !! EXPIRED {expiry['days_overdue']} day(s) ago")
-                print(f"  !! This environment is past its TTL. "
-                      f"Extend with: python scripts/platform_cli.py env extend --name {name} --ttl-days 14")
-                print(f"  !! Or destroy: python scripts/platform_cli.py env destroy --name {name}")
+                print(f"  !! Extend with: platform_cli.py env extend --name {name} --ttl-days 14")
+                print(f"  !! Or destroy: platform_cli.py env destroy --name {name}")
             elif expiry["status"] == "warning":
                 print(f"  Expires     : {expires_str[:10]}  ! expires in {expiry['days_remaining']} day(s)")
-            else:
+            elif expiry["status"] != "permanent":
                 print(f"  Expires     : {expires_str[:10]}  ({expiry['days_remaining']} days remaining)")
+
+            if manifest.get("services_modified"):
+                print(f"\n  Modified services (from POC branches):")
+                for s in manifest["services_modified"]:
+                    print(f"    {s['service']:<28} branch: {s.get('source_branch','—')}")
+
         print(f"\n  {'Service':<28} {'Version':<18} {'Deployed at'}")
         print(f"  {'─' * 70}")
-        for svc, d in (data.get("services") or {}).items():
-            print(f"  {svc:<28} {d.get('version','—'):<18} {d.get('deployed_at','—')}")
+        for svc, d in sorted(services.items()):
+            print(f"  {svc:<28} {d.get('image_tag', d.get('version','—')):<18} {d.get('deployed_at','—')}")
         print()
 
     def create(
@@ -109,108 +139,112 @@ class EnvManager:
         owner: str = None,
         description: str = "",
         ttl_days: int = 14,
+        contact_slack: str = "",
         force: bool = False,
     ):
-        """
-        Create a new environment (typically a POC) forked from a base env.
-        Returns a dict with 'name' and 'warnings' (list of non-fatal issues).
+        """Create a new environment forked from a base environment.
 
-        TTL cap: max 365 days. Expiry is a soft deadline — no automatic destruction.
-        A warning is shown in `env info` and the dashboard when expired.
-        Use `env extend` to postpone the deadline.
+        Standard and POC environments are created the same way; type: poc adds
+        TTL, contact_slack, and services_modified fields to envs.yaml.
+
+        Returns a dict with 'name' and 'warnings' (list of non-fatal issues).
         """
-        # Cap TTL
         if ttl_days > 365:
             warn(f"TTL capped at 365 days (requested {ttl_days}).")
             ttl_days = 365
-        full_name = name if env_type == "fixed" else self._poc_name(name)
+
+        full_name = name if env_type in ("standard", "fixed") else self._poc_name(name)
         env_path = self.cfg.env_path(full_name)
         if env_path.exists():
             error_exit(f"Environment '{full_name}' already exists.")
 
-        step(f"Forking '{base}' -> '{full_name}'")
+        step(f"Forking '{base}' → '{full_name}'")
         try:
-            base_data = self.cfg.load_versions(base)
+            base_manifest = self.cfg.load_env_manifest(base)
+            base_services = self._load_services(base)
         except FileNotFoundError:
             error_exit(f"Base environment '{base}' not found.")
 
-        base_meta = base_data.get("_meta", {})
         warnings = []
 
         def _warn(msg):
             warn(msg)
             warnings.append(msg)
 
-        # ── Resolve cluster ────────────────────────────────────────────────
+        # ── Resolve cluster / platform / registry ──────────────────────────
         resolved_cluster = (
             cluster
-            or base_meta.get("cluster")
+            or base_manifest.get("cluster")
             or self.cfg.default_cluster_for(env_type)
         )
-
-        # ── Resolve platform ───────────────────────────────────────────────
         cluster_profile = self.cfg.get_cluster_profile(resolved_cluster)
         resolved_platform = (
             platform
             or cluster_profile.platform
-            or base_meta.get("platform", "openshift")
+            or base_manifest.get("platform", "openshift")
         )
-
         if resolved_platform not in PLATFORMS:
             error_exit(
                 f"Unknown platform '{resolved_platform}'. "
                 f"Valid values: {', '.join(PLATFORMS)}"
             )
-
-        # ── Resolve registry ───────────────────────────────────────────────
         resolved_registry = cluster_profile.registry
+        ns_pattern = namespace or f"{full_name}-{{service}}"
 
-        # ── Resolve namespace ──────────────────────────────────────────────
-        resolved_namespace = namespace or f"platform-{full_name}"
-
-        # ── Identity + confirmation disclaimer ────────────────────────────
+        # ── Identity + confirmation disclaimer ─────────────────────────────
         from identity import resolve_identity, format_disclaimer
         from output import confirm_with_actor
         identity = resolve_identity(self.cfg)
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(days=ttl_days)).isoformat() if env_type == "poc" else None
         actions = [
             f"Fork environment '{base}' → '{full_name}'",
             f"Platform: {resolved_platform}  |  Cluster: {resolved_cluster}",
-            f"Namespace: {resolved_namespace}" + (" (provided)" if namespace else " (auto)"),
-            f"Write envs/{full_name}/versions.yaml to platform-config",
+            f"Namespace pattern: {ns_pattern}",
+            f"Write envs/{full_name}/envs.yaml + per-service version.yaml files",
             f"Git commit: 'env: create environment {full_name}'",
         ]
         if env_type == "poc":
-            actions.append(f"Expires: {(datetime.now(timezone.utc) + timedelta(days=ttl_days)).strftime('%Y-%m-%d')}")
+            actions.append(f"Expires: {expires[:10] if expires else '—'}")
 
         if not self.dry_run and not self.json_output:
-            confirm_with_actor(
-                format_disclaimer(identity, actions),
-                force=force,
-            )
+            confirm_with_actor(format_disclaimer(identity, actions), force=force)
 
-        new_data = copy.deepcopy(base_data)
-        now = datetime.now(timezone.utc)
-        expires = (now + timedelta(days=ttl_days)).isoformat()
+        # ── Build envs.yaml ────────────────────────────────────────────────
         git_user = self._git_user()
-        new_data["_meta"] = {
-            "updated_at": now.isoformat(),
-            "updated_by": f"{git_user} via platform-cli",
-            "commit": "bootstrap",
-            "env_type": env_type,
-            "base_env": base,
-            "owner": owner or git_user,
-            "description": description,
-            "expires_at": expires,
-            "platform": resolved_platform,
-            "cluster": resolved_cluster,
-            "registry": resolved_registry,
-            "namespace": resolved_namespace,
-            "namespace_provided": namespace is not None,
-            "branch_convention": f"poc/{name}",
+        manifest: dict = {
+            "name":              full_name,
+            "type":              "poc" if env_type == "poc" else "standard",
+            "cluster":           resolved_cluster,
+            "namespace_pattern": ns_pattern,
+            "platform":          resolved_platform,
+            "registry":          resolved_registry,
+            "created_at":        now.isoformat(),
+            "updated_at":        now.isoformat(),
+            "updated_by":        f"{git_user} via platform-cli",
         }
+        if env_type == "poc":
+            manifest.update({
+                "base_env":          base,
+                "owner":             owner or git_user,
+                "description":       description,
+                "expires_at":        expires,
+                "contact_slack":     contact_slack,
+                "branch_convention": f"poc/{name}",
+                "services_modified": [],
+                "services_stable":   [],
+            })
 
         if not self.dry_run:
-            self.cfg.save_versions(full_name, new_data)
+            self.cfg.save_env_manifest(full_name, manifest)
+            # Copy per-service version.yaml files from base env
+            for svc, svc_data in (base_services or {}).items():
+                self.cfg.save_service_version(full_name, svc, dict(svc_data))
+                # Copy values.yaml if present
+                base_values = self.cfg.load_service_values(base, svc)
+                if base_values:
+                    self.cfg.save_service_values(full_name, svc, base_values)
+
             commit_ok = self._git_commit(
                 f"env: create environment '{full_name}'",
                 collect_warnings=warnings,
@@ -218,18 +252,16 @@ class EnvManager:
             if not commit_ok:
                 _warn(
                     "Could not auto-commit to platform-config Git repo. "
-                    "Run: git add envs/ && git commit -m 'env: create "
-                    f"{full_name}'"
+                    f"Run: git add envs/ && git commit -m 'env: create {full_name}'"
                 )
 
         success(f"Environment '{full_name}' created.")
         print(f"  Platform  : {resolved_platform}")
         print(f"  Cluster   : {resolved_cluster}")
         print(f"  Registry  : {resolved_registry}")
-        print(f"  Namespace : {resolved_namespace}"
-              + (" (provided)" if namespace else " (auto-generated)"))
+        print(f"  NS pattern: {ns_pattern}")
         if env_type == "poc":
-            print(f"  Expires   : {expires[:10]}")
+            print(f"  Expires   : {expires[:10] if expires else '—'}")
         print(f"  Based on  : {base}")
         if warnings:
             print()
@@ -238,8 +270,8 @@ class EnvManager:
                 print(f"  !  {w}")
         sep = chr(92) if IS_WINDOWS else "/"
         print()
-        print(f"  Deploy a service:  python scripts{sep}platform_cli.py deploy --env {full_name} --service <n> --version <ver>")
-        print(f"  Destroy when done: python scripts{sep}platform_cli.py env destroy --name {full_name}")
+        print(f"  Deploy a service:  platform_cli.py deploy --env {full_name} --service <n> --version <ver>")
+        print(f"  Destroy when done: platform_cli.py env destroy --name {full_name}")
 
         return {"name": full_name, "warnings": warnings}
 
@@ -248,43 +280,32 @@ class EnvManager:
         if not env_path.exists():
             error_exit(f"Environment '{name}' not found.")
         try:
-            data = self.cfg.load_versions(name)
-            env_type = data.get("_meta", {}).get("env_type", "fixed")
+            manifest = self.cfg.load_env_manifest(name)
+            env_type = manifest.get("type", "standard")
         except Exception:
             env_type = "unknown"
 
-        if env_type == "fixed":
+        if env_type == "standard":
             error_exit(
-                f"Cannot destroy fixed environment '{name}'. "
-                "Only POC environments can be destroyed."
+                f"Cannot destroy standard environment '{name}'. "
+                "Only POC environments can be destroyed via this command."
             )
 
         if not force:
             from identity import resolve_identity, format_disclaimer
             from output import confirm_with_actor
             identity = resolve_identity(self.cfg)
-            namespace = data.get("_meta", {}).get("namespace", f"platform-{name}")
-            ns_provided = data.get("_meta", {}).get("namespace_provided", False)
+            ns_pattern = manifest.get("namespace_pattern", f"{name}-{{service}}")
             actions = [
                 f"Delete POC environment '{name}' from platform-config",
                 f"Git commit: 'env: destroy POC environment {name}'",
+                f"Delete namespaces matching pattern '{ns_pattern}'",
             ]
-            if ns_provided:
-                actions.append(f"Namespace '{namespace}' will NOT be deleted (externally provided)")
-            else:
-                actions.append(f"Delete OpenShift namespace '{namespace}' (oc delete namespace)")
-
             confirm_with_actor(format_disclaimer(identity, actions), force=False)
 
         step(f"Destroying environment '{name}'")
         if not self.dry_run:
-            ns_provided = data.get("_meta", {}).get("namespace_provided", False)
-            if ns_provided:
-                namespace = data.get("_meta", {}).get("namespace", f"platform-{name}")
-                warn(f"Namespace '{namespace}' was provided externally — skipping deletion.")
-                warn("Remove deployed Helm releases manually before reusing the namespace.")
-            else:
-                self._delete_namespace(name, data)
+            self._delete_namespaces(name, manifest)
             import shutil
             shutil.rmtree(env_path)
             self._git_commit(f"env: destroy POC environment '{name}'")
@@ -293,29 +314,29 @@ class EnvManager:
 
     def diff(self, env_from: str, env_to: str):
         try:
-            from_data = self.cfg.load_versions(env_from)
-            to_data = self.cfg.load_versions(env_to)
+            from_services = self._load_services(env_from)
+            to_services   = self._load_services(env_to)
+            from_manifest = self.cfg.load_env_manifest(env_from)
+            to_manifest   = self.cfg.load_env_manifest(env_to)
         except FileNotFoundError as e:
             error_exit(str(e))
 
-        from_svcs = from_data.get("services", {})
-        to_svcs = to_data.get("services", {})
-        all_svcs = sorted(set(list(from_svcs) + list(to_svcs)))
+        all_svcs = sorted(set(list(from_services) + list(to_services)))
         results = []
         for svc in all_svcs:
-            fv = from_svcs.get(svc, {}).get("version", "—")
-            tv = to_svcs.get(svc, {}).get("version", "—")
+            fv = from_services.get(svc, {}).get("image_tag", from_services.get(svc, {}).get("version", "—"))
+            tv = to_services.get(svc, {}).get("image_tag", to_services.get(svc, {}).get("version", "—"))
             results.append({"service": svc, env_from: fv, env_to: tv, "changed": fv != tv})
 
         if self.json_output:
             print(json.dumps(results, indent=2))
             return
 
-        # Show platform/cluster context for each side
-        fm = from_data.get("_meta", {})
-        tm = to_data.get("_meta", {})
-        print(f"\n  Diff: {env_from} [{fm.get('platform','?')}/{fm.get('cluster','?')}]"
-              f"  →  {env_to} [{tm.get('platform','?')}/{tm.get('cluster','?')}]\n")
+        fp = from_manifest.get("platform", "?")
+        fc = from_manifest.get("cluster", "?")
+        tp = to_manifest.get("platform", "?")
+        tc = to_manifest.get("cluster", "?")
+        print(f"\n  Diff: {env_from} [{fp}/{fc}]  →  {env_to} [{tp}/{tc}]\n")
         col_w = [28, 18, 18, 8]
         header = ["Service", env_from, env_to, "Changed"]
         rows = [
@@ -325,25 +346,22 @@ class EnvManager:
         self._print_table(header, rows, col_w)
 
     def extend(self, name: str, ttl_days: int = 14):
-        """
-        Postpone the TTL of a POC environment by adding `ttl_days` to the
-        current `expires_at`. The new expiry cannot exceed 365 days from today.
+        """Postpone the TTL of a POC environment by adding ttl_days to expires_at.
+        The new expiry cannot exceed 365 days from today.
         """
         try:
-            data = self.cfg.load_versions(name)
+            manifest = self.cfg.load_env_manifest(name)
         except FileNotFoundError:
             error_exit(f"Environment '{name}' not found.")
 
-        meta = data.get("_meta", {})
-        if meta.get("env_type", "fixed") != "poc":
+        if manifest.get("type", "standard") != "poc":
             error_exit(f"'{name}' is not a POC environment — only POC environments have a TTL.")
 
         now = datetime.now(timezone.utc)
-        current_expires = meta.get("expires_at")
+        current_expires = manifest.get("expires_at")
         if current_expires:
             try:
                 base_dt = datetime.fromisoformat(current_expires.replace("Z", "+00:00"))
-                # If already expired, extend from now; if still valid, extend from current expiry
                 base_dt = max(base_dt, now)
             except ValueError:
                 base_dt = now
@@ -351,20 +369,17 @@ class EnvManager:
             base_dt = now
 
         new_expires = base_dt + timedelta(days=ttl_days)
-        # Hard cap: max 365 days from today
         max_expires = now + timedelta(days=365)
         if new_expires > max_expires:
             warn(f"New expiry capped at 365 days from today ({max_expires.date()}).")
             new_expires = max_expires
 
-        meta["expires_at"] = new_expires.isoformat()
-        meta["updated_at"] = now.isoformat()
-        git_user = self._git_user()
-        meta["updated_by"] = f"{git_user} via platform-cli (extend)"
-        data["_meta"] = meta
+        manifest["expires_at"] = new_expires.isoformat()
+        manifest["updated_at"] = now.isoformat()
+        manifest["updated_by"] = f"{self._git_user()} via platform-cli (extend)"
 
         if not self.dry_run:
-            self.cfg.save_versions(name, data)
+            self.cfg.save_env_manifest(name, manifest)
             self._git_commit(f"env: extend TTL for '{name}' until {new_expires.date()}")
 
         success(f"TTL extended for '{name}'.")
@@ -383,19 +398,40 @@ class EnvManager:
     # PRIVATE
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _expiry_status(self, data: dict) -> dict:
+    def _load_services(self, env_name: str) -> dict:
+        """Return {service: version_data} for all services in the environment."""
+        services: dict = {}
+        for svc in self.cfg.list_services_in_env(env_name):
+            try:
+                services[svc] = self.cfg.load_service_version(env_name, svc)
+            except FileNotFoundError:
+                pass
+        # Also check legacy versions.yaml if no per-service dirs found
+        if not services:
+            legacy = self.cfg._try_load_legacy(env_name)
+            if legacy:
+                for svc, d in (legacy.get("services") or {}).items():
+                    services[svc] = {
+                        "service":     svc,
+                        "image_tag":   d.get("version", ""),
+                        "image":       d.get("image", ""),
+                        "deployed_at": d.get("deployed_at", ""),
+                        "deployed_by": d.get("deployed_by", ""),
+                        "health":      d.get("health", ""),
+                    }
+        return services
+
+    def _expiry_status(self, manifest: dict) -> dict:
+        """Compute expiry status for a POC environment manifest.
+
+        Returns:
+          {"status": "ok" | "warning" | "expired" | "permanent"}
+          plus "days_remaining" and "days_overdue" for poc envs.
         """
-        Compute expiry status for a POC environment.
-        Returns a dict with:
-          status: "ok" | "warning" (≤7 days) | "expired"
-          days_remaining: int (negative if expired)
-          days_overdue: int (0 if not expired)
-        """
-        meta = data.get("_meta", {})
-        if meta.get("env_type") != "poc":
+        if manifest.get("type", "standard") != "poc":
             return {"status": "permanent"}
 
-        expires_str = meta.get("expires_at")
+        expires_str = manifest.get("expires_at")
         if not expires_str:
             return {"status": "unknown"}
 
@@ -430,21 +466,13 @@ class EnvManager:
             return "unknown"
 
     def _git_commit(self, message: str, collect_warnings: list = None) -> bool:
-        """Commit changes to the platform-config repo and push to remote.
-
-        Staged paths: envs/ + platform.yaml (cluster profiles, defaults).
-
-        Push strategy: pull --rebase before push so parallel operations
-        (CI deploys, other team members) do not cause non-fast-forward errors.
-        The local commit is always preserved even when push fails.
-        """
+        """Commit changes to the platform-config repo and push to remote."""
         def _warn(msg):
             if collect_warnings is not None:
                 collect_warnings.append(msg)
             else:
                 warn(msg)
 
-        # Guard: must be inside a git repo
         try:
             run(["git", "rev-parse", "--git-dir"],
                 cwd=self.cfg.root, check=True, capture_output=True)
@@ -455,7 +483,6 @@ class EnvManager:
             )
             return False
 
-        # Stage envs/ and platform.yaml
         try:
             run(["git", "add", "envs/", "platform.yaml"],
                 cwd=self.cfg.root, check=True, capture_output=True)
@@ -465,7 +492,6 @@ class EnvManager:
             _warn("Could not auto-commit. Please commit the env changes manually.")
             return False
 
-        # Push to remote if one is configured
         try:
             has_remote = run(
                 ["git", "remote"],
@@ -479,7 +505,6 @@ class EnvManager:
                 cwd=self.cfg.root, capture_output=True, text=True,
             ).stdout.strip()
 
-            # Pull --rebase to reconcile commits from parallel operations
             try:
                 run(
                     ["git", "pull", "--rebase", "origin", branch],
@@ -493,7 +518,7 @@ class EnvManager:
                     f"Local commit saved. Resolve manually: "
                     f"git pull --rebase origin {branch} && git push origin {branch}"
                 )
-                return True  # local commit succeeded
+                return True
 
             run(
                 ["git", "push", "origin", branch],
@@ -508,29 +533,50 @@ class EnvManager:
 
         return True
 
-
-    def _delete_namespace(self, name: str, data: dict):
-        namespace = data.get("_meta", {}).get("namespace", f"platform-{name}")
+    def _delete_namespaces(self, name: str, manifest: dict):
+        """Delete all cluster namespaces matching the environment's pattern."""
         kube = kubectl_executable()
         if not kube:
             warn("kubectl/oc not found — skipping namespace deletion. Run manually:")
-            warn(f"  kubectl delete namespace {namespace} --ignore-not-found")
+            ns_pattern = manifest.get("namespace_pattern", f"{name}-{{service}}")
+            warn(f"  kubectl delete namespace -l env={name}")
             return
-        cmd = [kube, "delete", "namespace", namespace, "--ignore-not-found"]
+
+        # Get all namespaces matching the env prefix
         try:
-            run(cmd, check=True, capture_output=True)
-        except subprocess.CalledProcessError as e:
-            warn(f"Namespace deletion failed: {e.stderr.decode() if e.stderr else str(e)}")
+            result = run(
+                [kube, "get", "namespaces", "-o",
+                 "jsonpath={.items[*].metadata.name}"],
+                capture_output=True, text=True,
+            )
+            all_ns = result.stdout.strip().split()
+        except Exception:
+            all_ns = []
+
+        prefix = name + "-"
+        matching = [ns for ns in all_ns if ns.startswith(prefix) or ns == name]
+
+        if not matching:
+            step(f"No namespaces found matching '{prefix}*' — nothing to delete.")
+            return
+
+        for ns in matching:
+            cmd = [kube, "delete", "namespace", ns, "--ignore-not-found"]
+            try:
+                run(cmd, check=True, capture_output=True)
+                step(f"Deleted namespace: {ns}")
+            except subprocess.CalledProcessError as e:
+                warn(f"Namespace deletion failed for '{ns}': "
+                     f"{e.stderr.decode() if e.stderr else str(e)}")
 
     def _load_all_envs(self) -> list[dict]:
         result = []
         for env_name in self.cfg.list_envs():
             try:
-                data = self.cfg.load_versions(env_name)
-                data["name"] = env_name
-                result.append(data)
+                manifest = self.cfg.load_env_manifest(env_name)
             except Exception:
-                result.append({"name": env_name, "_meta": {}})
+                manifest = {"name": env_name, "type": "standard"}
+            result.append({"name": env_name, "manifest": manifest})
         return result
 
     def _print_table(self, header, rows, col_widths):

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: {{SERVICE_NAME}}
+description: {{DESCRIPTION}}
+type: application
+# Helm chart version — kept in sync with version.txt by Jenkins
+version: 0.1.0
+appVersion: "0.1.0"

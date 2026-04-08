@@ -424,6 +424,7 @@ class AuditEventSchema(BaseModel):
     message: str | None = None
     platform: str | None = None
     cluster: str | None = None
+    warning: bool = False
 
 
 class PlatformConfigSchema(BaseModel):
@@ -997,7 +998,7 @@ def get_history(
     )
     return [
         AuditEventSchema(label=e.label, **e.as_dict())
-        for e in events
+        for e in reversed(events)
     ]
 
 
@@ -1123,6 +1124,141 @@ def env_diff(env_from: str, env_to: str) -> list[dict]:
         }
         for svc in sorted(set(list(from_svcs) + list(to_svcs)))
     ]
+
+
+@app.get("/api/envs/{name}/drift", tags=["Environments"],
+         summary="Get live drift status for an environment")
+def env_drift(name: str) -> dict:
+    """
+    Compare desired state (envs/{env}/{service}/version.yaml) against the actual
+    running state on the cluster.  Returns a per-service drift summary.
+
+    Service status values: ok | degraded | drift | missing | unknown
+    """
+    from status_checker import StatusChecker, format_status_table
+    checker = StatusChecker(cfg)
+    try:
+        result = checker.check_env(name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Environment '{name}' not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Drift check failed: {e}")
+    return result.as_dict()
+
+
+@app.get("/api/envs/{name}/ttl", tags=["Environments"],
+         summary="Get POC environment TTL and expiry status")
+def env_ttl(name: str) -> dict:
+    """
+    Returns TTL information for a POC environment:
+      - expires_at   : ISO timestamp
+      - hours_remaining : float (negative when expired)
+      - status       : ok | warning | expired | permanent
+      - contact_slack : Slack channel from poc.yaml (envs.yaml)
+
+    Returns status: permanent for standard environments.
+    """
+    try:
+        manifest = cfg.load_env_manifest(name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Environment '{name}' not found")
+
+    from datetime import datetime, timezone
+    env_type = manifest.get("type", "standard")
+    if env_type != "poc":
+        return {"status": "permanent", "name": name, "type": env_type}
+
+    expires_str = manifest.get("expires_at", "")
+    if not expires_str:
+        return {"status": "unknown", "name": name, "type": env_type}
+
+    try:
+        expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+    except ValueError:
+        return {"status": "unknown", "name": name}
+
+    now = datetime.now(timezone.utc)
+    remaining = (expires_at - now).total_seconds() / 3600
+    if remaining <= 0:
+        status = "expired"
+    elif remaining <= 6:
+        status = "warning"
+    else:
+        status = "ok"
+
+    return {
+        "name":            name,
+        "type":            "poc",
+        "status":          status,
+        "expires_at":      expires_str,
+        "hours_remaining": round(remaining, 1),
+        "contact_slack":   manifest.get("contact_slack", ""),
+        "owner":           manifest.get("owner", ""),
+        "base_env":        manifest.get("base_env", ""),
+        "services_modified": manifest.get("services_modified", []),
+    }
+
+
+@app.post("/api/envs/{name}/create-prs", tags=["Environments"],
+          summary="Create PRs to merge POC branches back into develop")
+def create_poc_prs(name: str) -> dict:
+    """
+    For each service listed in the POC env's services_modified list,
+    opens a pull request from poc/{poc-name} → develop using gh CLI.
+
+    Returns a list of {service, pr_url, status} per PR created.
+    Requires GH_TOKEN (or GITHUB_TOKEN) in the environment and the gh CLI installed.
+    """
+    try:
+        manifest = cfg.load_env_manifest(name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Environment '{name}' not found")
+
+    if manifest.get("type") != "poc":
+        raise HTTPException(status_code=400,
+                            detail=f"'{name}' is not a POC environment")
+
+    services_modified = manifest.get("services_modified", [])
+    if not services_modified:
+        raise HTTPException(status_code=400,
+                            detail=f"No services_modified declared in envs.yaml for '{name}'")
+
+    results = []
+    import subprocess as _sp
+    for svc in services_modified:
+        service = svc.get("service", "")
+        source_branch = svc.get("source_branch", "")
+        source_repo = svc.get("source_repo", "")
+        if not service or not source_branch:
+            results.append({"service": service, "status": "skipped",
+                             "error": "Missing service or source_branch in services_modified"})
+            continue
+
+        cmd = [
+            "gh", "pr", "create",
+            "--repo", source_repo or service,
+            "--head", source_branch,
+            "--base", "develop",
+            "--title", f"feat: merge {source_branch} → develop ({name})",
+            "--body", (
+                f"## POC Reintegration\n\n"
+                f"POC environment: `{name}`\n"
+                f"Source branch: `{source_branch}`\n\n"
+                f"Validated in POC environment. Merging changes back into develop."
+            ),
+        ]
+        try:
+            result = _sp.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                pr_url = result.stdout.strip()
+                results.append({"service": service, "status": "created", "pr_url": pr_url})
+            else:
+                results.append({"service": service, "status": "error",
+                                 "error": result.stderr.strip()[:300]})
+        except Exception as e:
+            results.append({"service": service, "status": "error", "error": str(e)})
+
+    return {"name": name, "prs": results}
 
 
 # ── Services ──────────────────────────────────────────────────────────────────

@@ -14,4 +14,6 @@ library(
                            credentialsId: 'github-token'])
 )
 
-buildService(template: 'python-api')
+// Build config is in .platform/build.yaml; version is in version.txt.
+// No template parameter needed — both files are present in every scaffolded service.
+buildService()

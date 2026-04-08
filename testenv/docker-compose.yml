@@ -5,8 +5,8 @@
 # every pod's /etc/hosts), so no shared network with k3d is needed.
 #
 # Start order (managed by create.sh):
-#   Phase 1 — dc up -d postgres sonarqube registry gitea nexus
-#   Phase 2 — dc up -d jenkins   (after SonarQube token + Nexus config + k3d SA token)
+#   Phase 1 — dc up -d postgres sonarqube registry gitea artifactory
+#   Phase 2 — dc up -d jenkins   (after SonarQube token + Artifactory config + k3d SA token)
 
 services:
 
@@ -55,7 +55,7 @@ services:
         soft: 65536
         hard: 65536
 
-  # ── Local container registry — simulates registry.internal / Artifactory ─────
+  # ── Local container registry ──────────────────────────────────────────────────
   registry:
     image: registry:2
     ports:
@@ -64,21 +64,28 @@ services:
       - registry_data:/var/lib/registry
     restart: unless-stopped
 
-  # ── Nexus OSS — Maven artifact repository (simulates Artifactory) ──────────
+  # ── JFrog Artifactory OSS — Maven artifact repository ────────────────────────
   # Hosts internal com.myorg:* artifacts and proxies Maven Central so build
   # pods resolve all dependencies through a single internal endpoint.
-  # Initial admin password is at /nexus-data/admin.password (first boot only).
-  nexus:
-    image: sonatype/nexus3:3.76.0
+  # Web UI: http://localhost:8082  (admin / see .users)
+  #
+  # Pinned to 7.41.13 — last OSS release with free repository REST APIs.
+  # Newer OSS versions (7.49+) restrict PUT /api/repositories to Pro only,
+  # and drop the default admin/password in favour of a 15-min bootstrap token.
+  # 7.41.13 uses Derby (embedded), so no separate postgres DB is needed.
+  artifactory:
+    image: releases-docker.jfrog.io/jfrog/artifactory-oss:7.41.13
     ports:
-      - "8081:8081"
+      - "8082:8082"
     volumes:
-      - nexus_data:/nexus-data
+      - artifactory_data:/var/opt/jfrog/artifactory
+    environment:
+      ARTIFACTORY_HOME: /var/opt/jfrog/artifactory
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8081/service/rest/v1/status | grep -q '\"edition\"'"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8082/artifactory/api/system/ping | grep -q OK"]
       interval: 20s
       timeout: 10s
-      retries: 20
+      retries: 30
       start_period: 120s
     restart: unless-stopped
 
@@ -121,15 +128,10 @@ services:
       - sonarqube
       - registry
       - gitea
-      - nexus
+      - artifactory
     # Make the host machine reachable from inside the Jenkins container.
     # This is required so the Kubernetes plugin can reach the k3d API at
     # host.containers.internal:6550 (K8S_API_URL).
-    # - host.containers.internal: Podman's conventional hostname for the host.
-    # - host.docker.internal: Docker's conventional hostname (Mac/Windows native;
-    #   needs host-gateway on Linux).
-    # host-gateway is a Compose special value that resolves to the host's gateway
-    # IP and works with both Docker Compose V2 and podman-compose.
     extra_hosts:
       - "host.containers.internal:host-gateway"
       - "host.docker.internal:host-gateway"
@@ -144,9 +146,8 @@ services:
       K8S_API_URL: "${K8S_API_URL}"
       K8S_SA_TOKEN: "${K8S_SA_TOKEN}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-placeholder-set-in-env}"
-      # Nexus password injected into build pods via nexus-credentials Secret.
-      # Also used by Jenkins controller for any direct Nexus API calls.
-      NEXUS_PASSWORD: "${NEXUS_PASSWORD:-}"
+      # Artifactory password injected into build pods via artifactory-credentials Secret.
+      ARTIFACTORY_PASSWORD: "${ARTIFACTORY_PASSWORD:-}"
       # Docker-internal hostname — used by JCasC (giteaServers, globalLibraries).
       # Must NOT be localhost:3000 (that resolves to Jenkins itself inside the container).
       # k3d pods resolve 'gitea' via a headless Service+Endpoints in jenkins-builds
@@ -181,5 +182,5 @@ volumes:
   sonarqube_logs:
   registry_data:
   gitea_data:
-  nexus_data:
+  artifactory_data:
   jenkins_data:

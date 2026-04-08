@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 # ── Version info (injected at build time via env vars) ────────────────────────
-APP_VERSION = os.environ.get("APP_VERSION", "0.1.0-SNAPSHOT")
+APP_VERSION = os.environ.get("APP_VERSION", "0.1.0")
 GIT_COMMIT  = os.environ.get("GIT_COMMIT", "local")
 BUILD_DATE  = os.environ.get("BUILD_DATE", "unknown")
 

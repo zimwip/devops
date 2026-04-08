@@ -1198,17 +1198,31 @@ def run(demo: bool = False, yes_mode: bool = False, config_path: str = "",
         target_dir = (toolkit_root / target_dir).resolve()
 
     # ── Copy platform template to target directory ────────────────────────────
+    _TEMPLATE_SYNC_DIRS = ("scripts", "templates", "dashboard", "docs", "libs")
+    _IGNORE = _shutil.ignore_patterns(
+        "__pycache__", "*.pyc", ".pytest_cache", "node_modules", "dist", ".venv",
+    )
     if target_dir.exists() and (target_dir / ".git").exists():
-        warn(f"Platform instance already exists at {target_dir} — skipping copy.")
+        # Instance already exists — sync platform-owned directories so that
+        # new or updated toolkit files (scripts, templates, …) reach the repo.
+        step(f"Platform instance exists at {target_dir} — syncing toolkit files")
+        for subdir in _TEMPLATE_SYNC_DIRS:
+            src_sub = src_dir / subdir
+            dst_sub = target_dir / subdir
+            if src_sub.exists():
+                if dst_sub.exists():
+                    _shutil.rmtree(dst_sub)
+                _shutil.copytree(str(src_sub), str(dst_sub), ignore=_IGNORE)
+        # Also sync top-level helper scripts (platform.sh, Makefile, …)
+        for item in src_dir.iterdir():
+            if item.is_file() and item.name not in ("platform.yaml",):
+                _shutil.copy2(str(item), str(target_dir / item.name))
+        success(f"Toolkit files synced to {target_dir}")
     else:
         step(f"Copying platform template to {target_dir}")
         if target_dir.exists():
             _shutil.rmtree(target_dir)
-        _shutil.copytree(str(src_dir), str(target_dir),
-                         ignore=_shutil.ignore_patterns(
-                             "__pycache__", "*.pyc", ".pytest_cache",
-                             "node_modules", "dist", ".venv",
-                         ))
+        _shutil.copytree(str(src_dir), str(target_dir), ignore=_IGNORE)
         import subprocess as _sp
         _sp.run(["git", "-C", str(target_dir), "init", "-b", "main"],
                 check=True, capture_output=True)
@@ -1277,12 +1291,14 @@ def run(demo: bool = False, yes_mode: bool = False, config_path: str = "",
         "platform_target_dir": str(target_dir),
         "platform_repo_name":  (_CONFIG or {}).get("platform_repo_name", "platform"),
         "shared_lib_repo_name": shared_lib_repo_name,
-        "github_url":   cfg.github_url,
-        "github_org":   cfg.github_org,
-        "jenkins_url":  cfg.jenkins_url,
-        "sonarqube_url": cfg.sonarqube_url,
-        "bootstrapped_at": datetime.now(timezone.utc).isoformat(),
-        "libraries": _pdata.get("libraries", {}),
+        "github_url":          cfg.github_url,
+        "github_api_path":     (_CONFIG or {}).get("github_api_path", ""),
+        "github_account_type": (_CONFIG or {}).get("github_account_type", "org"),
+        "github_org":          cfg.github_org,
+        "jenkins_url":         cfg.jenkins_url,
+        "sonarqube_url":       cfg.sonarqube_url,
+        "bootstrapped_at":     datetime.now(timezone.utc).isoformat(),
+        "libraries":           _pdata.get("libraries", {}),
     }
     state_file = bootstrap_dir / ".bootstrap-state.yaml"
     with open(state_file, "w") as f:

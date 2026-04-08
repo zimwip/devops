@@ -83,6 +83,57 @@ if ($staged) {
 }
 Pop-Location
 
+# ── Push to origin ────────────────────────────────────────────────────────────
+Push-Location $platformDir
+$originUrl = (git remote get-url origin 2>$null)
+if ($originUrl) {
+    Write-Step "Pushing to origin"
+    $pushOk = $false
+
+    git push -u origin main 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $pushOk = $true
+    } else {
+        # Remote may have a stale commit from a previous bootstrap run.
+        # Force-push is safe: this repo belongs to this bootstrap instance.
+        Write-Warn "Normal push rejected — remote has diverged history (stale bootstrap?)."
+        Write-Warn "Force-pushing local content to origin..."
+        git push --force -u origin main 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $pushOk = $true }
+    }
+
+    if ($pushOk) {
+        Write-OK "Pushed to $originUrl"
+
+        # Strip embedded credentials from the push URL for the clean clone URL
+        $cloneUrl = python -c @"
+from urllib.parse import urlparse, urlunparse
+u = urlparse('$originUrl')
+netloc = u.hostname + (':' + str(u.port) if u.port else '')
+print(urlunparse(u._replace(netloc=netloc)))
+"@
+        Write-Step "Replacing initialised repo with a clean clone"
+        $parentDir = Split-Path -Parent $platformDir
+        $cloneName = Split-Path -Leaf $platformDir
+        Pop-Location
+        Remove-Item -Recurse -Force $platformDir
+        git clone $cloneUrl (Join-Path $parentDir $cloneName)
+        if ($LASTEXITCODE -eq 0) {
+            $platformDir = Join-Path $parentDir $cloneName
+            Write-OK "Platform instance cloned at $platformDir"
+        } else {
+            Write-Warn "Clone failed — push succeeded but clone manually:"
+            Write-Warn "  git clone $cloneUrl $platformDir"
+        }
+    } else {
+        Pop-Location
+        Write-Warn "git push failed — local commit created successfully."
+        Write-Warn "Push manually: cd $platformDir; git push --force -u origin main"
+    }
+} else {
+    Pop-Location
+}
+
 # ── Node dependencies in platform-instance ────────────────────────────────────
 try {
     node --version 2>&1 | Out-Null

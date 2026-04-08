@@ -17,9 +17,7 @@ In both cases, versions.yaml is updated after a successful trigger.
 
 import json
 import os
-import shutil
 import subprocess
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,18 +44,18 @@ class Deployer:
         step(f"Deploying {service}:{version} → {env}")
 
         try:
-            env_data = self.cfg.load_versions(env)
+            manifest = self.cfg.load_env_manifest(env)
         except FileNotFoundError:
             error_exit(f"Environment '{env}' not found.")
 
-        meta = env_data.get("_meta", {})
-        namespace    = meta.get("namespace", f"platform-{env}")
-        cluster_name = meta.get("cluster", self.cfg.default_cluster_dev)
-        profile      = self.cfg.get_cluster_profile(cluster_name)
-        registry     = meta.get("registry") or profile.registry
-        image        = f"{registry}/{service}:{version}"
+        cluster_name   = manifest.get("cluster", self.cfg.default_cluster_dev)
+        profile        = self.cfg.get_cluster_profile(cluster_name)
+        registry       = manifest.get("registry") or profile.registry
+        image          = f"{registry}/{service}:{version}"
+        ns_pattern     = manifest.get("namespace_pattern", f"{env}-{{service}}")
+        namespace      = ns_pattern.replace("{service}", service)
 
-        # ── Identity + confirmation disclaimer ────────────────────────────
+        # ── Identity + confirmation disclaimer ─────────────────────────────
         from identity import resolve_identity, format_disclaimer
         from output import confirm_with_actor
         identity = resolve_identity(self.cfg)
@@ -70,14 +68,11 @@ class Deployer:
         if self.cfg.jenkins_token:
             actions.append("Via Jenkins parameterised build")
         else:
-            actions.append(f"Direct Helm deploy (helm upgrade --install)")
-        actions.append(f"Update envs/{env}/versions.yaml")
+            actions.append("Direct Helm deploy from OCI registry (helm upgrade --install)")
+        actions.append(f"Update envs/{env}/{service}/version.yaml")
 
         if not self.dry_run and not self.json_output:
-            confirm_with_actor(
-                format_disclaimer(identity, actions),
-                force=force,
-            )
+            confirm_with_actor(format_disclaimer(identity, actions), force=force)
 
         if self.dry_run:
             self._print_dry_run(profile, service, version, namespace, image)
@@ -85,34 +80,51 @@ class Deployer:
 
         # ── Deploy path ────────────────────────────────────────────────────
         if self.cfg.jenkins_token:
-            # Jenkins handles platform-specific auth internally
             self._trigger_jenkins(service, version, env, namespace,
                                   profile.platform, cluster_name)
         else:
-            # Direct local deploy: fetch chart from service repo first
             if profile.is_openshift:
                 self._deploy_openshift(profile, service, version, namespace, wait, env)
             else:
                 self._deploy_aws(profile, service, version, namespace, wait, env)
 
-        # ── Update versions.yaml + commit ─────────────────────────────────────
+        # ── Update per-service version.yaml + commit ───────────────────────
         now = datetime.now(timezone.utc).isoformat()
-        actor = identity.display_name if identity.display_email == "" \
+        actor = (
+            identity.display_name if identity.display_email == ""
             else f"{identity.display_name} <{identity.display_email}>"
-        env_data.setdefault("services", {})[service] = {
-            "version": version,
-            "image": image,
-            "deployed_at": now,
-            "deployed_by": actor,
-            "health": "deploying",
-        }
-        env_data["_meta"]["updated_at"] = now
-        env_data["_meta"]["updated_by"] = actor
-        # Record commit SHA on the meta so history can link back to it
-        env_data["_meta"]["commit"] = self._git_head_sha()
-        self.cfg.save_versions(env, env_data)
+        )
+        helm_registry = os.environ.get("HELM_REGISTRY", "registry.internal")
+        # Determine Helm chart repo based on version type
+        is_release = bool(__import__("re").match(r"^\d+\.\d+\.\d+$", version))
+        helm_repo = "helm-release" if is_release else "helm-local"
+        chart_repo = f"oci://{helm_registry}/{helm_repo}/{service}"
 
-        # Git-commit the updated versions.yaml so it appears in history
+        svc_version_data = {
+            "service":      service,
+            "chart_version": version,
+            "image_tag":    version,
+            "chart_repo":   chart_repo,
+            "image":        image,
+            "deployed_at":  now,
+            "deployed_by":  actor,
+            "health":       "deploying",
+        }
+        # Merge into existing file if present (preserves custom fields)
+        try:
+            existing = self.cfg.load_service_version(env, service)
+            existing.update(svc_version_data)
+            svc_version_data = existing
+        except FileNotFoundError:
+            pass
+        self.cfg.save_service_version(env, service, svc_version_data)
+
+        # Update envs.yaml metadata
+        manifest["updated_at"] = now
+        manifest["updated_by"] = actor
+        manifest["commit"] = self._git_head_sha()
+        self.cfg.save_env_manifest(env, manifest)
+
         self._git_commit(
             f"deploy: {service}:{version} → {env} [{profile.platform}/{cluster_name}]"
         )
@@ -138,18 +150,18 @@ class Deployer:
 
     def request_deploy(self, env: str, service: str, version: str,
                        force: bool = False):
-        """Declare a desired deployment in versions.yaml (GitOps pull model).
+        """Declare a desired deployment (GitOps pull model).
 
-        Writes a `requested_deployments` entry for the service. Jenkins will
-        pick this up on the next successful build when version == 'latest' and
-        auto == True, then call execute_deploy_request().
+        Writes a deploy-request file at envs/{env}/{service}/deploy-request.yaml.
+        Jenkins picks this up on the next successful build when version == 'latest'
+        and auto == True, then calls execute_deploy_request().
         """
         from identity import resolve_identity
 
         step(f"Requesting deployment: {service}@{version} → {env}")
 
         try:
-            env_data = self.cfg.load_versions(env)
+            self.cfg.load_env_manifest(env)
         except FileNotFoundError:
             error_exit(f"Environment '{env}' not found.")
 
@@ -161,33 +173,33 @@ class Deployer:
         )
         now = datetime.now(timezone.utc).isoformat()
 
-        env_data["requested_deployments"][service] = {
+        request_data = {
+            "service":          service,
             "requested_version": version,
-            "requested_at": now,
-            "requested_by": actor,
-            "auto": version == "latest",
-            "status": "pending",
+            "requested_at":     now,
+            "requested_by":     actor,
+            "auto":             version == "latest",
+            "status":           "pending",
             "fulfilled_version": None,
-            "fulfilled_at": None,
+            "fulfilled_at":     None,
         }
-        self.cfg.save_versions(env, env_data)
+        request_path = self.cfg.env_path(env) / service / "deploy-request.yaml"
+        request_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(request_path, "w") as fh:
+            yaml.dump(request_data, fh, default_flow_style=False, allow_unicode=True)
+
         self._git_commit(f"deploy-request: {service}@{version} → {env}")
         success(f"Deployment request recorded: {service}@{version} in {env}")
 
     def cancel_deploy_request(self, env: str, service: str, force: bool = False):
-        """Remove a pending deployment request from versions.yaml."""
+        """Remove a pending deployment request."""
         step(f"Cancelling deployment request: {service} in {env}")
 
-        try:
-            env_data = self.cfg.load_versions(env)
-        except FileNotFoundError:
-            error_exit(f"Environment '{env}' not found.")
-
-        if service not in env_data.get("requested_deployments", {}):
+        request_path = self.cfg.env_path(env) / service / "deploy-request.yaml"
+        if not request_path.exists():
             error_exit(f"No pending deployment request for '{service}' in '{env}'.")
 
-        del env_data["requested_deployments"][service]
-        self.cfg.save_versions(env, env_data)
+        request_path.unlink()
         self._git_commit(f"deploy-cancel: {service} in {env}")
         success(f"Deployment request cancelled: {service} in {env}")
 
@@ -198,22 +210,19 @@ class Deployer:
         Called by Jenkins after resolving 'latest' to the actual built tag.
         Runs the real deploy(), then marks the request as fulfilled.
         """
-        # Run the actual deployment
         self.deploy(env=env, service=service, version=version,
                     wait=wait, force=force)
 
-        # Mark the request as fulfilled (re-load after deploy() wrote to it)
-        try:
-            env_data = self.cfg.load_versions(env)
-        except FileNotFoundError:
-            return  # already deployed; nothing to update
-
-        requests = env_data.get("requested_deployments", {})
-        if service in requests:
-            requests[service]["status"] = "fulfilled"
-            requests[service]["fulfilled_version"] = version
-            requests[service]["fulfilled_at"] = datetime.now(timezone.utc).isoformat()
-            self.cfg.save_versions(env, env_data)
+        # Mark the request as fulfilled
+        request_path = self.cfg.env_path(env) / service / "deploy-request.yaml"
+        if request_path.exists():
+            with open(request_path) as fh:
+                request_data = yaml.safe_load(fh) or {}
+            request_data["status"] = "fulfilled"
+            request_data["fulfilled_version"] = version
+            request_data["fulfilled_at"] = datetime.now(timezone.utc).isoformat()
+            with open(request_path, "w") as fh:
+                yaml.dump(request_data, fh, default_flow_style=False, allow_unicode=True)
             self._git_commit(f"deploy-fulfilled: {service}@{version} → {env}")
 
     def _git_commit(self, message: str):
@@ -294,22 +303,21 @@ class Deployer:
 
     def _print_dry_run(self, profile: ClusterProfile, service, version,
                        namespace, image):
+        helm_registry = os.environ.get("HELM_REGISTRY", "registry.internal")
+        is_release = bool(__import__("re").match(r"^\d+\.\d+\.\d+$", version))
+        helm_repo = "helm-release" if is_release else "helm-local"
         print(f"  [dry-run] platform   : {profile.platform}")
         print(f"  [dry-run] cluster    : {profile.name}")
         print(f"  [dry-run] image      : {image}")
         print(f"  [dry-run] namespace  : {namespace}")
         if profile.is_openshift:
             print(f"  [dry-run] oc login --server={profile.api_url}")
-            print(f"  [dry-run] oc project {namespace}")
         else:
             print(f"  [dry-run] aws eks update-kubeconfig "
-                  f"--region {profile.region} "
-                  f"--name {profile.cluster_name}")
-        print(f"  [dry-run] git clone --depth 1 <service-repo> → "
-              f"envs/<env>/charts/{service}/{version}/")
+                  f"--region {profile.region} --name {profile.cluster_name}")
         print(f"  [dry-run] helm upgrade --install {service} "
-              f"envs/<env>/charts/{service}/{version}/helm/")
-        print(f"  [dry-run]   --namespace {namespace}")
+              f"oci://{helm_registry}/{helm_repo}/{service}")
+        print(f"  [dry-run]   --version {version} --namespace {namespace}")
         print(f"  [dry-run]   --set image.tag={version}")
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -337,22 +345,16 @@ class Deployer:
 
     def _deploy_openshift(self, profile: ClusterProfile, service, version,
                            namespace, wait, env):
-        """Deploy to OpenShift using Helm.
-
-        Auth: expects an active `oc login` session (context set in kubeconfig)
-        or uses the cluster context declared in platform.yaml.
-        """
+        """Deploy to OpenShift using Helm chart from OCI registry."""
         step(f"OpenShift deploy → {profile.name} / {namespace}")
         self._ensure_oc_context(profile)
-        chart_dir = self._fetch_chart(service, version, env)
-        self._helm_deploy(
+        self._helm_deploy_oci(
             service=service,
             version=version,
             namespace=namespace,
-            values_suffix=profile.helm_values_suffix,
+            env=env,
             wait=wait,
-            chart_dir=chart_dir,
-            extra_args=["--set", f"openshift.enabled=true"],
+            extra_args=["--set", "openshift.enabled=true"],
         )
 
     def _ensure_oc_context(self, profile: ClusterProfile):
@@ -381,22 +383,15 @@ class Deployer:
 
     def _deploy_aws(self, profile: ClusterProfile, service, version,
                      namespace, wait, env):
-        """Deploy to EKS using Helm.
-
-        Auth: updates kubeconfig via AWS CLI (requires aws CLI + valid credentials).
-        Image pull: assumes ECR credentials are already configured (via IRSA or
-        node instance profile) — no explicit docker login needed.
-        """
+        """Deploy to EKS using Helm chart from OCI registry."""
         step(f"AWS EKS deploy → {profile.cluster_name} ({profile.region}) / {namespace}")
         self._ensure_eks_context(profile)
-        chart_dir = self._fetch_chart(service, version, env)
-        self._helm_deploy(
+        self._helm_deploy_oci(
             service=service,
             version=version,
             namespace=namespace,
-            values_suffix=profile.helm_values_suffix,
+            env=env,
             wait=wait,
-            chart_dir=chart_dir,
             extra_args=["--set", f"aws.region={profile.region}"],
         )
 
@@ -426,151 +421,18 @@ class Deployer:
             )
 
     # ─────────────────────────────────────────────────────────────────────────
-    # PRIVATE — Chart fetch from service repo
+    # PRIVATE — Helm OCI deploy
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _authenticated_url(self, repo_url: str) -> str:
-        """Inject the platform GitHub/Gitea token into an HTTP(S) git URL.
+    def _helm_deploy_oci(self, service: str, version: str, namespace: str,
+                          env: str, wait: bool, extra_args=None):
+        """Run `helm upgrade --install` pulling the chart from the OCI registry.
 
-        Leaves SSH URLs and URLs that already carry credentials unchanged.
-        """
-        token = self.cfg.github_token
-        if not token or not repo_url.startswith("http"):
-            return repo_url
-        proto, rest = repo_url.split("://", 1)
-        if "@" in rest:
-            # Strip existing embedded credentials before re-injecting.
-            rest = rest.split("@", 1)[1]
-        return f"{proto}://{token}@{rest}"
+        Release versions (X.Y.Z) are pulled from helm-release (immutable).
+        Everything else (SNAPSHOT, rc, poc) is pulled from helm-local.
 
-    def _resolve_git_ref(self, auth_url: str, version: str) -> str | None:
-        """Return the git tag name for *version*, or None to use the default branch.
-
-        Probes the remote for ``v{version}`` first, then ``{version}``.
-        Falls back to None (default branch / HEAD) with a warning when neither
-        tag exists, so callers can still fetch the latest chart for a hotfix.
-        """
-        for candidate in (f"v{version}", version):
-            try:
-                out = run(
-                    ["git", "ls-remote", "--tags", "--exit-code",
-                     auth_url, f"refs/tags/{candidate}"],
-                    capture_output=True, text=True,
-                )
-                if out.returncode == 0 and out.stdout.strip():
-                    return candidate
-            except FileNotFoundError:
-                warn("git not found — cannot probe remote tags.")
-                return None
-            except Exception:
-                pass
-        warn(
-            f"No git tag found for version '{version}' "
-            f"(tried v{version} and {version}) — fetching default branch HEAD."
-        )
-        return None
-
-    def _fetch_chart(self, service: str, version: str, env: str) -> Path:
-        """Fetch helm/ from the service's git repo and persist it locally.
-
-        Destination:
-            envs/{env}/charts/{service}/{version}/helm/   ← Helm chart
-            envs/{env}/charts/{service}/{version}/chart-source.yaml ← provenance
-
-        The chart directory is committed as part of the deployment audit commit
-        (the existing ``git add envs/`` in _git_commit covers it automatically),
-        so the exact chart used for each deploy is permanently traceable.
-
-        Idempotent: if the directory already exists the fetch is skipped.
-        """
-        dest_root = self.cfg.root / "envs" / env / "charts" / service / version
-        helm_dest = dest_root / "helm"
-
-        if helm_dest.exists():
-            step(f"Chart already fetched: envs/{env}/charts/{service}/{version}/helm/")
-            return helm_dest
-
-        # ── Resolve repo URL ──────────────────────────────────────────────
-        try:
-            svc_data = self.cfg.load_service(service)
-        except FileNotFoundError:
-            error_exit(
-                f"Service '{service}' not found in the platform catalog. "
-                f"Register it first: platform.sh svc create {service} <owner>"
-            )
-
-        repo_url = svc_data.get("repo_url", "")
-        if not repo_url:
-            error_exit(
-                f"Service '{service}' has no repo_url in its catalog entry — "
-                "cannot fetch Helm chart."
-            )
-
-        auth_url = self._authenticated_url(repo_url)
-
-        step(f"Fetching Helm chart for {service}:{version} from {repo_url}")
-
-        # ── Resolve git ref (tag) ─────────────────────────────────────────
-        ref = self._resolve_git_ref(auth_url, version)
-
-        # ── Shallow clone into a temp dir ─────────────────────────────────
-        tmp = tempfile.mkdtemp(prefix=f"ap3-chart-{service}-")
-        try:
-            clone_cmd = ["git", "clone", "--depth", "1"]
-            if ref is not None:
-                clone_cmd += ["--branch", ref]
-            clone_cmd += [auth_url, tmp]
-
-            try:
-                run(clone_cmd, check=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                stderr = e.stderr.decode(errors="replace").strip() if e.stderr else str(e)
-                error_exit(
-                    f"Could not clone {repo_url} "
-                    f"(ref={ref or 'default branch'}): {stderr}"
-                )
-
-            src_helm = Path(tmp) / "helm"
-            if not src_helm.is_dir():
-                error_exit(
-                    f"No helm/ directory found in {repo_url} "
-                    f"at ref '{ref or 'HEAD'}'. "
-                    "Ensure the service repo contains a helm/ chart directory."
-                )
-
-            # ── Copy chart to persistent location ────────────────────────
-            dest_root.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(str(src_helm), str(helm_dest))
-
-            # ── Write provenance sidecar ──────────────────────────────────
-            provenance = {
-                "service":    service,
-                "version":    version,
-                "env":        env,
-                "repo_url":   repo_url,
-                "git_ref":    ref or "HEAD (default branch)",
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-            }
-            with open(dest_root / "chart-source.yaml", "w") as fh:
-                yaml.dump(provenance, fh, default_flow_style=False)
-
-            step(f"Chart stored: envs/{env}/charts/{service}/{version}/")
-            return helm_dest
-
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # PRIVATE — Helm (shared by both platforms)
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _helm_deploy(self, service, version, namespace, values_suffix,
-                      wait, chart_dir: Path, extra_args=None):
-        """
-        Run `helm upgrade --install` for the service.
-
-        Uses the chart from *chart_dir* (fetched by _fetch_chart).
-        Applies ``values-{values_suffix}.yaml`` from the same directory if present.
+        Per-service values.yaml from the platform-config repo is applied as an
+        additional --values override when present.
         """
         helm = helm_executable()
         if not helm:
@@ -580,20 +442,28 @@ class Deployer:
             )
             return
 
-        values_file = chart_dir / f"values-{values_suffix}.yaml"
+        import re as _re
+        is_release = bool(_re.match(r"^\d+\.\d+\.\d+$", version))
+        helm_registry = os.environ.get("HELM_REGISTRY", "registry.internal")
+        helm_repo = "helm-release" if is_release else "helm-local"
+        chart_ref = f"oci://{helm_registry}/{helm_repo}/{service}"
+
         cmd = [
-            helm, "upgrade", "--install", service, str(chart_dir),
+            helm, "upgrade", "--install", service, chart_ref,
+            "--version", version,
             "--namespace", namespace,
             "--create-namespace",
             "--set", f"image.tag={version}",
             "--atomic",
             "--history-max", "5",
         ]
-        # Apply per-environment values file if it exists
-        if values_file.exists():
-            cmd += ["--values", str(values_file)]
+
+        # Apply per-service values.yaml from platform-config if present
+        values_path = self.cfg.service_values_path(env, service)
+        if values_path.exists():
+            cmd += ["--values", str(values_path)]
         else:
-            warn(f"Values file not found: {values_file.name} — deploying with defaults only.")
+            step(f"No values.yaml for {service} in {env} — deploying with chart defaults")
 
         if extra_args:
             cmd += extra_args
@@ -601,7 +471,7 @@ class Deployer:
         if wait:
             cmd += ["--wait", "--timeout", "5m"]
 
-        step(f"helm upgrade --install {service} (namespace: {namespace})")
+        step(f"helm upgrade --install {service} from {chart_ref}:{version} (ns: {namespace})")
         try:
             run(cmd, check=True)
         except subprocess.CalledProcessError as e:

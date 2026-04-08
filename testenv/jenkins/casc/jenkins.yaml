@@ -45,6 +45,16 @@ jenkins:
         readTimeout: 300
         containerCapStr: "10"
 
+  # Global environment variable available in all build pods.
+  # PLATFORM_CONFIG_REPO: used by buildService.groovy Setup stage to clone the
+  # platform repo into /opt/platform/ so validate_version.py, platform_cli.py,
+  # etc. are available. Must use the Docker-internal hostname (gitea:3000).
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: "PLATFORM_CONFIG_REPO"
+            value: "${GITEA_URL}/${GITEA_ORG}/platform.git"
+
 # ── SonarQube server ─────────────────────────────────────────────────────────
 unclassified:
   sonarGlobalConfiguration:
@@ -120,3 +130,25 @@ credentials:
               id: "registry-url"
               description: "Container registry URL"
               secret: "localhost:5000"
+
+          # Artifactory REST API base URL
+          - string:
+              scope: GLOBAL
+              id: "artifactory-url"
+              description: "Artifactory base URL"
+              secret: "http://host.k3d.internal:8082"
+
+          # Artifactory OCI Helm registry hostname (no scheme — used in helm push oci://)
+          - string:
+              scope: GLOBAL
+              id: "helm-registry-url"
+              description: "Artifactory OCI registry hostname for Helm charts"
+              secret: "host.k3d.internal:8082"
+
+          # Artifactory admin credentials (username + password)
+          - usernamePassword:
+              scope: GLOBAL
+              id: "artifactory-credentials"
+              description: "Artifactory admin credentials"
+              username: "admin"
+              password: "${ARTIFACTORY_PASSWORD:-password}"

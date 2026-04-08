@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Build args injected by Jenkins
-ARG APP_VERSION=0.1.0-SNAPSHOT
+ARG APP_VERSION=0.1.0
 ARG GIT_COMMIT=local
 ARG BUILD_DATE=unknown
 

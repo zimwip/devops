@@ -206,31 +206,211 @@ class PlatformConfig:
     def env_path(self, env_name: str) -> Path:
         return self.envs_dir / env_name
 
-    def env_versions_path(self, env_name: str) -> Path:
-        return self.env_path(env_name) / "versions.yaml"
+    def env_manifest_path(self, env_name: str) -> Path:
+        """Path to envs/{env}/envs.yaml — the environment manifest."""
+        return self.env_path(env_name) / "envs.yaml"
+
+    def service_version_path(self, env_name: str, service: str) -> Path:
+        """Path to envs/{env}/{service}/version.yaml."""
+        return self.env_path(env_name) / service / "version.yaml"
+
+    def service_values_path(self, env_name: str, service: str) -> Path:
+        """Path to envs/{env}/{service}/values.yaml — Helm values override."""
+        return self.env_path(env_name) / service / "values.yaml"
 
     def list_envs(self) -> list[str]:
+        """List all environments (both new envs.yaml and legacy versions.yaml)."""
         if not self.envs_dir.exists():
             return []
         return sorted(
             d.name for d in self.envs_dir.iterdir()
-            if d.is_dir() and (d / "versions.yaml").exists()
+            if d.is_dir() and (
+                (d / "envs.yaml").exists() or (d / "versions.yaml").exists()
+            )
         )
 
-    def load_versions(self, env_name: str) -> dict:
+    def list_services_in_env(self, env_name: str) -> list[str]:
+        """List services deployed in an environment (directories containing version.yaml)."""
+        env_dir = self.env_path(env_name)
+        if not env_dir.exists():
+            return []
+        return sorted(
+            d.name for d in env_dir.iterdir()
+            if d.is_dir() and (d / "version.yaml").exists()
+        )
+
+    # ── New per-service structure ─────────────────────────────────────────────
+
+    def load_env_manifest(self, env_name: str) -> dict:
+        """Load envs/{env}/envs.yaml. Returns default for standard env if absent."""
+        path = self.env_manifest_path(env_name)
+        if path.exists():
+            with open(path) as f:
+                return yaml.safe_load(f) or {}
+        # Fallback: synthesize from legacy _meta if versions.yaml exists
+        legacy = self._try_load_legacy(env_name)
+        if legacy is not None:
+            meta = legacy.get("_meta", {})
+            env_type = meta.get("env_type", "standard")
+            manifest: dict = {
+                "name":    env_name,
+                "type":    "poc" if env_type == "poc" else "standard",
+                "cluster": meta.get("cluster", self.default_cluster_dev),
+                "namespace_pattern": f"{env_name}-{{service}}",
+            }
+            if env_type == "poc":
+                manifest.update({
+                    "owner":             meta.get("owner", ""),
+                    "description":       meta.get("description", ""),
+                    "created_at":        meta.get("updated_at", ""),
+                    "ttl_hours":         int((meta.get("ttl_days", 14) or 14)) * 24,
+                    "contact_slack":     meta.get("contact_slack", ""),
+                    "services_modified": meta.get("services_modified", []),
+                    "services_stable":   meta.get("services_stable", []),
+                    "expires_at":        meta.get("expires_at", ""),
+                    "base_env":          meta.get("base_env", ""),
+                    "branch_convention": meta.get("branch_convention", ""),
+                })
+            return manifest
+        raise FileNotFoundError(f"Environment '{env_name}' not found at {self.env_path(env_name)}")
+
+    def save_env_manifest(self, env_name: str, data: dict):
+        """Save envs/{env}/envs.yaml."""
+        path = self.env_manifest_path(env_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    def load_service_version(self, env_name: str, service: str) -> dict:
+        """Load envs/{env}/{service}/version.yaml."""
+        path = self.service_version_path(env_name, service)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Service '{service}' not found in environment '{env_name}' at {path}"
+            )
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+
+    def save_service_version(self, env_name: str, service: str, data: dict):
+        """Save envs/{env}/{service}/version.yaml."""
+        path = self.service_version_path(env_name, service)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    def load_service_values(self, env_name: str, service: str) -> dict:
+        """Load envs/{env}/{service}/values.yaml (Helm overrides). Empty dict if absent."""
+        path = self.service_values_path(env_name, service)
+        if not path.exists():
+            return {}
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+
+    def save_service_values(self, env_name: str, service: str, data: dict):
+        """Save envs/{env}/{service}/values.yaml."""
+        path = self.service_values_path(env_name, service)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    # ── Legacy structure (backward compat) ────────────────────────────────────
+
+    def env_versions_path(self, env_name: str) -> Path:
+        """Legacy: envs/{env}/versions.yaml (kept for backward compat and migration)."""
+        return self.env_path(env_name) / "versions.yaml"
+
+    def _try_load_legacy(self, env_name: str) -> Optional[dict]:
+        """Try to load a legacy versions.yaml. Returns None if absent."""
         path = self.env_versions_path(env_name)
         if not path.exists():
-            raise FileNotFoundError(f"Environment '{env_name}' not found at {path}")
+            return None
         with open(path) as f:
             data = yaml.safe_load(f) or {}
-        # Normalize: bare `services:` key parses as None in PyYAML
         if data.get("services") is None:
             data["services"] = {}
         if data.get("requested_deployments") is None:
             data["requested_deployments"] = {}
         return data
 
+    def load_versions(self, env_name: str) -> dict:
+        """Load environment state. Prefers new per-service structure; falls back to legacy."""
+        # New structure: build a versions-compatible dict from envs.yaml + per-service files
+        manifest_path = self.env_manifest_path(env_name)
+        if manifest_path.exists():
+            manifest = self.load_env_manifest(env_name)
+            services: dict = {}
+            for svc in self.list_services_in_env(env_name):
+                svc_data = self.load_service_version(env_name, svc)
+                services[svc] = {
+                    "version":     svc_data.get("image_tag", svc_data.get("version", "")),
+                    "image":       svc_data.get("image", ""),
+                    "deployed_at": svc_data.get("deployed_at", ""),
+                    "deployed_by": svc_data.get("deployed_by", ""),
+                    "health":      svc_data.get("health", ""),
+                }
+            # Synthesize a _meta-compatible dict for code that still reads _meta
+            meta: dict = {
+                "env_type":  manifest.get("type", "standard"),
+                "cluster":   manifest.get("cluster", self.default_cluster_dev),
+                "namespace": manifest.get("namespace",
+                             manifest.get("namespace_pattern", f"platform-{env_name}")
+                             .replace("{service}", "").rstrip("-")),
+                "updated_at": manifest.get("updated_at", ""),
+                "updated_by": manifest.get("updated_by", ""),
+                "commit":     manifest.get("commit", ""),
+            }
+            if manifest.get("type") == "poc":
+                meta.update({
+                    "owner":             manifest.get("owner", ""),
+                    "description":       manifest.get("description", ""),
+                    "expires_at":        manifest.get("expires_at", ""),
+                    "base_env":          manifest.get("base_env", ""),
+                    "branch_convention": manifest.get("branch_convention", ""),
+                    "contact_slack":     manifest.get("contact_slack", ""),
+                })
+            return {"_meta": meta, "services": services, "requested_deployments": {}}
+
+        # Legacy fallback
+        data = self._try_load_legacy(env_name)
+        if data is not None:
+            return data
+        raise FileNotFoundError(f"Environment '{env_name}' not found at {self.env_path(env_name)}")
+
     def save_versions(self, env_name: str, data: dict):
+        """Save environment state.
+
+        If envs.yaml exists (new structure): update per-service version.yaml files.
+        Otherwise: write legacy versions.yaml.
+        """
+        manifest_path = self.env_manifest_path(env_name)
+        if manifest_path.exists():
+            # Update per-service files; don't touch envs.yaml here
+            meta = data.get("_meta", {})
+            for svc, svc_data in (data.get("services") or {}).items():
+                existing: dict = {}
+                try:
+                    existing = self.load_service_version(env_name, svc)
+                except FileNotFoundError:
+                    pass
+                existing.update({
+                    "service":     svc,
+                    "image_tag":   svc_data.get("version", ""),
+                    "image":       svc_data.get("image", ""),
+                    "deployed_at": svc_data.get("deployed_at", ""),
+                    "deployed_by": svc_data.get("deployed_by", ""),
+                    "health":      svc_data.get("health", ""),
+                })
+                self.save_service_version(env_name, svc, existing)
+            # Reflect metadata updates into envs.yaml
+            if meta:
+                manifest = self.load_env_manifest(env_name)
+                for k in ("updated_at", "updated_by", "commit"):
+                    if meta.get(k):
+                        manifest[k] = meta[k]
+                self.save_env_manifest(env_name, manifest)
+            return
+
+        # Legacy: write versions.yaml
         path = self.env_versions_path(env_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:

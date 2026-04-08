@@ -13,8 +13,9 @@
 
   <groupId>com.myorg</groupId>
   <artifactId>{{SERVICE_NAME}}</artifactId>
-  <!-- VERSION IS THE SOURCE OF TRUTH — propagated to Docker tag, Helm chart, git tag -->
-  <version>0.1.0-SNAPSHOT</version>
+  <!-- version.txt at repo root is the source of truth for the pipeline.
+       Keep this in sync with version.txt — both must be X.Y.Z (no suffix). -->
+  <version>0.1.0</version>
   <name>{{SERVICE_NAME}}</name>
   <description>{{DESCRIPTION}}</description>
 

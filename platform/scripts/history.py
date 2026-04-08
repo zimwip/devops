@@ -49,6 +49,7 @@ class AuditEvent:
     message: Optional[str] = None    # free-text detail
     platform: Optional[str] = None   # openshift | aws
     cluster: Optional[str] = None    # cluster name
+    warning: bool = False            # True when commit message was not recognised
 
     @property
     def label(self) -> str:
@@ -62,7 +63,7 @@ class AuditEvent:
             return datetime.min.replace(tzinfo=timezone.utc)
 
     def as_dict(self) -> dict:
-        return {k: v for k, v in asdict(self).items() if v is not None}
+        return {k: v for k, v in asdict(self).items() if v is not None or k == "warning"}
 
 
 # ── Collector ─────────────────────────────────────────────────────────────────
@@ -343,14 +344,14 @@ class HistoryCollector:
             )
 
         # ── Final fallback: unrecognised commit that still touched envs/ ─────
-        # Emit rather than silently drop so nothing is invisible.
+        # Emit with warning=True so the UI can flag it visually.
         env_name = self._guess_env_from_message(msg)
         if env_filter and env_name != env_filter:
             return None
         return AuditEvent(
             timestamp=timestamp, event_type="env_update",
             actor=actor, env=env_name or "platform", commit=commit_sha,
-            message=msg,
+            message=msg, warning=True,
         )
 
     def _guess_env_from_message(self, msg: str) -> str | None:
@@ -436,7 +437,7 @@ class HistoryCollector:
 # ── CLI formatter ─────────────────────────────────────────────────────────────
 
 def format_history_table(events: list[AuditEvent]) -> str:
-    """Render events as a fixed-width CLI table."""
+    """Render events as a fixed-width CLI table, newest first."""
     if not events:
         return "\n  No history found.\n"
 
@@ -447,7 +448,7 @@ def format_history_table(events: list[AuditEvent]) -> str:
         return "  " + "  ".join(str(v)[:w].ljust(w) for v, w in zip(row, col_w))
 
     lines = ["\n", fmt(header), "  " + "  ".join("-" * w for w in col_w)]
-    for e in events:
+    for e in reversed(events):
         detail = e.version or e.message or ""
         if e.cluster:
             detail = f"{e.version or ''} [{e.cluster}]".strip()

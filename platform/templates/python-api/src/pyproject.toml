@@ -1,0 +1,12 @@
+[project]
+name = "{{SERVICE_NAME}}"
+version = "0.1.0"
+description = "{{DESCRIPTION}}"
+requires-python = ">=3.12"
+
+# version.txt at repo root is the source of truth for the pipeline.
+# Keep this in sync with version.txt — both must be X.Y.Z (no suffix).
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"

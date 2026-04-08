@@ -1,0 +1,34 @@
+# helm/values.yaml — default values, overridden per environment
+
+replicaCount: 1
+
+image:
+  repository: registry.internal/{{SERVICE_NAME}}
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readiness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Environment variables baked into the nginx container at runtime via configmap
+env:
+  APP_ENV: "default"

@@ -1895,6 +1895,7 @@ function HistoryPanel() {
               { value: "env_create",  label: "Env created" },
               { value: "env_destroy", label: "Env destroyed" },
               { value: "env_update",  label: "Env updated" },
+              { value: "service_reg", label: "Service registered" },
               { value: "reset",       label: "Platform reset" },
             ]}
           />
@@ -1932,6 +1933,7 @@ function HistoryPanel() {
             const detail = e.version
               ? `${e.version}${e.cluster ? ` [${e.cluster}]` : ""}`
               : e.message || "";
+            const borderColor = e.warning ? C.amber : color;
             return (
               <div
                 key={i}
@@ -1941,18 +1943,24 @@ function HistoryPanel() {
                   gap: "0 16px",
                   alignItems: "center",
                   padding: "9px 16px",
-                  background: i % 2 === 0 ? C.bg2 : C.bg3,
+                  background: e.warning
+                    ? `${C.amber}0d`
+                    : i % 2 === 0 ? C.bg2 : C.bg3,
                   borderRadius: 6,
-                  borderLeft: `2px solid ${color}`,
+                  borderLeft: `2px solid ${borderColor}`,
                   fontSize: 12,
                 }}
               >
-                {/* Icon */}
-                <span style={{ color, fontWeight: 700, fontSize: 13, textAlign: "center" }}>{icon}</span>
+                {/* Icon — amber ⚠ for unrecognised commits */}
+                <span style={{ color: borderColor, fontWeight: 700, fontSize: 13, textAlign: "center" }}>
+                  {e.warning ? "⚠" : icon}
+                </span>
                 {/* Timestamp */}
                 <MonoLabel color={C.muted}>{e.timestamp.slice(0, 19).replace("T", " ")}</MonoLabel>
                 {/* Type badge */}
-                <span style={{ ...pill(color), fontSize: 10 }}>{e.label}</span>
+                <span style={{ ...pill(borderColor), fontSize: 10 }}>
+                  {e.warning ? "unrecognised" : e.label}
+                </span>
                 {/* Env */}
                 <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
                   <MonoLabel color={C.text}>{e.env}</MonoLabel>
@@ -1971,7 +1979,12 @@ function HistoryPanel() {
                       {e.service}
                     </span>
                   )}
-                  {detail && <span style={{ color: C.muted, fontSize: 11 }}>{detail}</span>}
+                  {detail && (
+                    <span style={{ color: e.warning ? C.amber : C.muted, fontSize: 11 }}
+                          title={e.warning ? "Commit message format not recognised by the platform" : undefined}>
+                      {detail}
+                    </span>
+                  )}
                 </div>
               </div>
             );

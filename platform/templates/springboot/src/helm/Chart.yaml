@@ -4,4 +4,4 @@ description: {{DESCRIPTION}}
 type: application
 # Helm chart version — kept in sync with appVersion by Jenkins
 version: 0.1.0
-appVersion: "0.1.0-SNAPSHOT"
+appVersion: "0.1.0"
