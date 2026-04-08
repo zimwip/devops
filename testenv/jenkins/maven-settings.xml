@@ -6,8 +6,10 @@
   Build pods reach Artifactory via host.k3d.internal:8082 — k3d injects this
   hostname (→ host machine IP) into every pod's /etc/hosts.
 
-  maven-internal resolves com.myorg:* artifacts (deployed by create.sh).
-  All other dependencies resolve directly from Maven Central.
+  All Maven traffic is routed through the maven-public virtual repo, which
+  aggregates maven-internal (com.myorg:* artifacts) and maven-central-proxy
+  (cached proxy of Maven Central). This means each artifact is fetched from
+  Central only once and served from Artifactory cache on subsequent builds.
 
   ARTIFACTORY_PASSWORD is injected from the artifactory-credentials Secret.
 -->
@@ -16,39 +18,27 @@
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0
                               https://maven.apache.org/xsd/settings-1.2.0.xsd">
 
-  <!-- Explicit mirror overrides Maven 3.8+ built-in HTTP blocker (maven-default-http-blocker). -->
+  <!-- Route all Maven traffic through Artifactory. Overrides the built-in
+       maven-default-http-blocker (Maven 3.8+) for the internal HTTP endpoint. -->
   <mirrors>
     <mirror>
-      <id>maven-internal</id>
-      <mirrorOf>maven-internal</mirrorOf>
-      <url>http://host.k3d.internal:8082/artifactory/maven-internal/</url>
+      <id>maven-public</id>
+      <mirrorOf>*</mirrorOf>
+      <url>http://host.k3d.internal:8082/artifactory/maven-public/</url>
     </mirror>
   </mirrors>
 
   <servers>
+    <server>
+      <id>maven-public</id>
+      <username>admin</username>
+      <password>${env.ARTIFACTORY_PASSWORD}</password>
+    </server>
     <server>
       <id>maven-internal</id>
       <username>admin</username>
       <password>${env.ARTIFACTORY_PASSWORD}</password>
     </server>
   </servers>
-
-  <profiles>
-    <profile>
-      <id>ap3</id>
-      <repositories>
-        <repository>
-          <id>maven-internal</id>
-          <url>http://host.k3d.internal:8082/artifactory/maven-internal/</url>
-          <releases><enabled>true</enabled></releases>
-          <snapshots><enabled>false</enabled></snapshots>
-        </repository>
-      </repositories>
-    </profile>
-  </profiles>
-
-  <activeProfiles>
-    <activeProfile>ap3</activeProfile>
-  </activeProfiles>
 
 </settings>

@@ -649,25 +649,32 @@ update_users "ARTIFACTORY_PASSWORD" "$ARTIFACTORY_PASSWORD"
 source "$ENV_FILE"
 source "$USERS_FILE"
 
-# Create maven-internal local repo via system config API.
-# PUT /api/repositories/{key} is Pro-only in Artifactory OSS 7.x.
-# POST /api/system/configuration (full XML config replace) works in OSS.
-# We skip maven-central-proxy (remote) and maven-public (virtual) — build pods
-# resolve com.myorg:* from maven-internal and everything else from Maven Central
-# directly (see maven-settings-configmap.yaml / jenkins/maven-settings.xml).
+# Create Maven repos via the system config API (POST /api/system/configuration).
+# PUT /api/repositories/{key} is Pro-only in Artifactory OSS 7.x; the full XML
+# config replace works in OSS for all repo types.
+#
+# We create three repos and inject them all in one POST:
+#   maven-internal       — local, stores com.myorg:* artifacts deployed by this script
+#   maven-central-proxy  — remote proxy of Maven Central; Artifactory caches downloads
+#   maven-public         — virtual, combines both; build pods use this as their sole mirror
+#
+# Routing all Maven traffic through maven-public means each artifact is fetched once
+# from Central and then served from the local cache on subsequent builds.
 _ART_CFG=$(curl -s --max-time 10 -u "admin:${ARTIFACTORY_PASSWORD}" \
     "http://localhost:8082/artifactory/api/system/configuration" 2>/dev/null)
-if echo "$_ART_CFG" | grep -q "maven-internal"; then
-    ok "Artifactory: maven-internal repo already exists"
+if echo "$_ART_CFG" | grep -q "maven-public"; then
+    ok "Artifactory: maven repos already exist"
 else
     _ART_CFG_NEW=$(echo "$_ART_CFG" | sed \
-        's|</localRepositories>|<localRepository><key>maven-internal</key><type>maven</type><repoLayoutRef>maven-2-default</repoLayoutRef><handleReleases>true</handleReleases><handleSnapshots>true</handleSnapshots></localRepository></localRepositories>|')
+        's|</localRepositories>|<localRepository><key>maven-internal</key><type>maven</type><repoLayoutRef>maven-2-default</repoLayoutRef><handleReleases>true</handleReleases><handleSnapshots>true</handleSnapshots></localRepository></localRepositories>|' | sed \
+        's|</remoteRepositories>|<remoteRepository><key>maven-central-proxy</key><type>maven</type><repoLayoutRef>maven-2-default</repoLayoutRef><url>https://repo.maven.apache.org/maven2</url><handleReleases>true</handleReleases><handleSnapshots>false</handleSnapshots></remoteRepository></remoteRepositories>|' | sed \
+        's|</virtualRepositories>|<virtualRepository><key>maven-public</key><type>maven</type><repositories><repository>maven-internal</repository><repository>maven-central-proxy</repository></repositories></virtualRepository></virtualRepositories>|')
     HTTP=$(curl -s --max-time 15 -o /dev/null -w "%{http_code}" \
         -u "admin:${ARTIFACTORY_PASSWORD}" -X POST \
         "http://localhost:8082/artifactory/api/system/configuration" \
         -H "Content-Type: application/xml" \
         -d "$_ART_CFG_NEW" 2>/dev/null)
-    [[ "$HTTP" == "200" ]] && ok "Artifactory: maven-internal repo created" \
+    [[ "$HTTP" == "200" ]] && ok "Artifactory: maven-internal, maven-central-proxy, maven-public created" \
         || warn "Artifactory config update returned HTTP $HTTP"
 fi
 
